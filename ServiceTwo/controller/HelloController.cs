@@ -11,6 +11,6 @@ public class HelloController : ControllerBase
     public ActionResult<HelloDto> GetWorld()
     {
         var hello = new HelloDto();
-        return Ok(hello.hello);
+        return Ok(hello);
     }
 }
