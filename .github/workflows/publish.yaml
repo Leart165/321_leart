@@ -29,5 +29,5 @@ jobs:
           context: ./ServiceTwo
           push: true
           tags: |
-            ghcr.io/Leart165/ServiceTwo:latest
-            ghcr.io/Leart165/ServiceTwo:${{ github.sha }}
+            ghcr.io/Leart165/servicetwo:latest
+            ghcr.io/Leart165/servicetwo:${{ github.sha }}
