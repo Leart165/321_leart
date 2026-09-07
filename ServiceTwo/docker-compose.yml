@@ -1,0 +1,48 @@
+# Lokale Entwicklung: alles aus dem Quellcode gebaut.
+#
+#   docker compose up --build -d
+#
+name: auth
+
+services:
+  authdb:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: auth
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: auth
+    ports:
+      - "5434:5432"
+    volumes:
+      # Postgres 18 legt die Daten unter /var/lib/postgresql/18/docker ab, das Volume gehoert
+      # deshalb auf den Elternordner.
+      - authdb-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U auth -d auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  auth-api:
+    build:
+      context: .
+      dockerfile: src/Auth.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      ConnectionStrings__AuthDb: "Host=authdb;Port=5432;Database=auth;Username=auth;Password=auth"
+      Jwt__Issuer: "http://localhost:8082"
+    ports:
+      - "8082:8080"
+    volumes:
+      # Das Signaturschluesselpaar liegt in einem eigenen Volume: ueberlebt einen Neustart des
+      # Containers, damit bereits ausgestellte Token nicht mit jedem Deploy ungueltig werden.
+      - auth-keys:/app/keys
+    depends_on:
+      authdb:
+        condition: service_healthy
+
+volumes:
+  authdb-data:
+  auth-keys:
