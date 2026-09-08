@@ -66,4 +66,10 @@ public sealed class AuthService
         return await _users.FindAsync(userId, cancellationToken)
             ?? throw new UserNotFoundException(userId);
     }
+
+    public async Task<IssuedToken> RefreshAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        User user = await GetAsync(userId, cancellationToken);
+        return _tokens.Issue(user);
+    }
 }
