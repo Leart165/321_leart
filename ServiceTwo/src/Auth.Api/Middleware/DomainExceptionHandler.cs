@@ -1,7 +1,6 @@
 using Auth.Domain.Exceptions;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace Auth.Api.Middleware;
 
@@ -60,20 +59,10 @@ public sealed class DomainExceptionHandler : IExceptionHandler
     {
         return exception switch
         {
-            UserNotFoundException => (StatusCodes.Status404NotFound, "Benutzer nicht gefunden"),
-            EmailAlreadyInUseException => (StatusCodes.Status409Conflict, "E-Mail-Adresse bereits vergeben"),
-            InvalidCredentialsException => (StatusCodes.Status401Unauthorized, "Anmeldung fehlgeschlagen"),
             DomainValidationException => (StatusCodes.Status400BadRequest, "Eingabe ungültig"),
-
-            DbUpdateException update when IsUniqueViolation(update)
-                => (StatusCodes.Status409Conflict, "E-Mail-Adresse bereits vergeben"),
+            UpstreamServiceException => (StatusCodes.Status502BadGateway, "Kontendienst nicht erreichbar"),
 
             _ => (0, string.Empty)
         };
-    }
-
-    private static bool IsUniqueViolation(DbUpdateException exception)
-    {
-        return exception.InnerException is Npgsql.PostgresException postgres && postgres.SqlState == "23505";
     }
 }
