@@ -1,6 +1,2 @@
 **/bin
 **/obj
-
-# Lokal erzeugtes RSA-Signaturschluesselpaar des Auth-Dienstes. Wird beim ersten Start
-# angelegt (siehe RsaSigningKeyStore) und darf nie ins Repository gelangen.
-**/keys/

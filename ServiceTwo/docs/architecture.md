@@ -1,9 +1,8 @@
 # Architektur
 
-Transaktions-Protokoll-Dienst der Bank-App für Modul M321. Kontendienst und Auszugsdienst
-liegen im Repository meines Teamkollegen Tim (`m321`); die Konten- und Transaktionsdaten selbst
-speichert dieser Dienst nicht, er fragt sie live beim Kontendienst ab. Der Vertrag, an den sich
-beide Seiten halten, steht in dessen `contracts/accounts/openapi.v1.yaml`.
+Der Auth-Service der Bank-App für Modul M321. Kontendienst und Auszugsdienst liegen im
+Repository meines Teamkollegen Tim (`m321`). Die Schnittstellenkontrakte, an die sich beide
+Seiten halten, stehen in `contracts/auth/` dieses Kontrakts: `openapi.v1.yaml` und `jwt.md`.
 
 ## Was hier läuft
 
@@ -11,25 +10,29 @@ beide Seiten halten, steht in dessen `contracts/accounts/openapi.v1.yaml`.
 flowchart TB
     kunde(["<b>Kunde</b>"])
 
-    subgraph tx["Transaktions-Protokoll-Dienst"]
-        api["<b>transactions-api</b><br/>.NET 10<br/>listet alle Buchungen eines Users, wie ein Log"]
+    subgraph auth["Auth-Dienst"]
+        api["<b>auth-api</b><br/>.NET 10<br/>registriert, meldet an, stellt Token aus"]
+        authdb[("<b>authdb</b><br/>Postgres 18")]
     end
 
-    accounts["accounts-api<br/>(anderes Repo, Tim)"]
+    accounts["accounts-api<br/>(anderes Repo)"]
 
     kunde --> api
-    api -->|"GET /v1/accounts?ownerId=<br/>GET /v1/accounts/{id}/transactions"| accounts
+    api --> authdb
+    accounts -->|"JWKS holen<br/>GET /.well-known/jwks.json"| api
 
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff
     classDef service fill:#1168bd,stroke:#0b4884,color:#ffffff
+    classDef store fill:#2d7dd2,stroke:#1a5a9e,color:#ffffff
     classDef other fill:#999999,stroke:#6b6b6b,color:#ffffff
     class kunde person
     class api service
+    class authdb store
     class accounts other
 ```
 
-Kein eigener Zustand, keine Datenbank: dieser Dienst ist ein reiner Abfrage-/Aggregations-Dienst
-vor dem Kontendienst.
+Ein einzelner Prozess und eine Datenbank. Kein Broker: dieser Dienst veröffentlicht (noch)
+kein `user.registered`-Ereignis, er beantwortet ausschliesslich HTTP-Anfragen.
 
 ## Starten
 
@@ -40,49 +43,57 @@ docker compose up --build -d
 | Adresse | Was |
 |---|---|
 | http://localhost:8082/swagger | Alle Endpunkte ausprobieren |
-| http://localhost:8082/v1/transactions?ownerId=... | Transaktions-Log eines Users |
+| http://localhost:8082/.well-known/jwks.json | Öffentliche Schlüssel |
 | http://localhost:8082/health | Bereitschaft |
-
-`AccountsApi__BaseUrl` (Umgebungsvariable bzw. `AccountsApi:BaseUrl` in `appsettings.json`)
-zeigt auf den Kontendienst. In `docker-compose.yml` ist das der Compose-Service-Name
-`accounts-api`; lokal ohne Compose `http://localhost:8080` (siehe `appsettings.Development.json`).
+| localhost:5434 | authdb, auth / auth |
 
 ## Aufbau des Codes
 
 ```
 src/
-  Auth.Domain/          Transaction, TransactionKind, Fehlerarten
-  Auth.Application/      TransactionLogService: Konten und deren Buchungen holen, zusammenführen, sortieren
-  Auth.Infrastructure/    AccountsApiClient: HTTP-Client für den Kontendienst
+  Auth.Domain/          Benutzer, E-Mail-Adresse, Fachregeln
+  Auth.Application/      AuthService: registrieren, anmelden, abfragen
+  Auth.Infrastructure/    Datenbank, Passwort-Hashing, RSA-Schlüssel, JWT-Ausstellung
   Auth.Api/               Controller und DTOs               → Container
+contracts/                Kopie der vereinbarten Schnittstelle
 ```
 
-Projekt- und Namespace-Namen (`Auth.*`) sind aus der Vorgängerversion des Dienstes
-(Registrierung/Login/JWT) übernommen und nicht umbenannt worden, um den Diff klein zu halten.
-
-Die Abhängigkeiten zeigen nur nach innen. `Auth.Domain` referenziert nichts und weiss nichts von
-HTTP oder JSON.
+Die Abhängigkeiten zeigen nur nach innen. `Auth.Domain` referenziert nichts. Die Domäne weiss
+nichts von Passwort-Hashing, RSA oder JWT: sie hält einen bereits gehashten Wert, ausgestellt
+von einer Schnittstelle, die die Infrastruktur umsetzt.
 
 ## Fachlichkeit
 
-`GET /v1/transactions?ownerId=...` liefert alle Buchungen, die ein Benutzer über all seine Konten
-hinweg durchgeführt hat, absteigend nach Buchungsdatum sortiert — ein Log. Der Dienst holt dazu
-erst die Konten des Inhabers (`GET /v1/accounts?ownerId=`), danach parallel je Konto dessen
-Buchungen, und führt beides zusammen. Eine leere Liste (Benutzer ohne Konten oder Buchungen) ist
-kein Fehler.
+Ein Benutzer hat eine E-Mail-Adresse (eindeutig, klein geschrieben) und einen Anzeigenamen.
+Registrierung und Anmeldung sind die beiden Vorgänge; alles andere ist Abfrage.
 
-## Offener Punkt: fehlender Vertrag beim Kontendienst
+`POST /v1/auth/register` prüft, ob die Adresse schon vergeben ist, hasht das Passwort
+(PBKDF2-HMAC-SHA256, 210'000 Iterationen, zufälliges Salt je Benutzer) und legt den Benutzer
+an. `POST /v1/auth/login` prüft die Zugangsdaten und stellt bei Erfolg ein Token aus. Beide
+Fälle einer falschen Anmeldung — unbekannte Adresse oder falsches Passwort — ergeben dieselbe
+Antwort, damit sich nicht erraten lässt, welche Adressen registriert sind.
 
-`contracts/accounts/openapi.v1.yaml` (Stand beim Schreiben dieses Dienstes) definiert **keinen**
-Endpunkt, der die Buchungen eines einzelnen Kontos auflistet — nur `POST .../deposits` und
-`POST .../withdrawals`, die je eine einzelne neu gebuchte `Transaction` zurückgeben. Dieser
-Dienst nimmt an, dass es `GET /v1/accounts/{accountId}/transactions` (Antwort: `Transaction[]`,
-gleiches Schema wie in der bestehenden Spec) gibt oder geben wird. Solange der Kontendienst
-diesen Endpunkt nicht anbietet, antwortet `GET /v1/transactions` mit `502 Bad Gateway`. Diese
-Erweiterung muss mit Tim abgestimmt und in `contracts/accounts/openapi.v1.yaml` ergänzt werden.
+## Token
+
+Aufbau und Pflicht-Claims stehen abschliessend in `contracts/auth/jwt.md`. Kurz zusammengefasst:
+RS256, `sub` ist die Benutzer-Id (== `ownerId` beim Kontendienst), `aud` ist `bank-api`.
+
+Das RSA-Schlüsselpaar entsteht beim allerersten Start und wird auf der Festplatte abgelegt
+(`Jwt:SigningKeyPath`, im Container ein eigenes Volume). Jeder weitere Start lädt denselben
+Schlüssel, damit bereits ausgestellte Token nicht mit jedem Neustart ungültig werden. Andere
+Dienste prüfen Token ausschliesslich über den öffentlichen Teil, den sie unter
+`GET /.well-known/jwks.json` abrufen — der private Schlüssel verlässt diesen Prozess nie.
+
+## Datenbank
+
+Eine Tabelle, `users`. Das Schema entsteht ausschliesslich aus EF-Core-Migrationen, die beim
+Start angewendet werden. Der eindeutige Index auf `email` ist die letzte Instanz gegen zwei
+gleichzeitige Registrierungen mit derselben Adresse; die Anwendungsschicht prüft vorab, damit
+der übliche Fall eine verständliche Antwort bekommt.
 
 ## Was absichtlich fehlt
 
-Keine Authentifizierung: wie `accounts-api` in Version 1 kommt `ownerId` aus der Anfrage, nicht
-aus einem Token. Kein Caching, kein Circuit Breaker, keine Wiederholungsversuche gegen den
-Kontendienst — bei jedem Ausfall antwortet dieser Dienst sofort mit 502.
+Dieser Dienst veröffentlicht kein `user.registered` auf `bank.events`. Der Kontendienst kann
+deshalb (noch) kein automatisches Standardkonto eröffnen. Sobald das dazukommt, folgt es
+demselben Outbox-Muster wie im Kontendienst: Benutzer und Ereignis in derselben Transaktion,
+ein Hintergrunddienst gibt es an den Broker.

@@ -17,6 +17,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
 WORKDIR /app
 COPY --from=build /app .
 
+# Das Signaturschluesselpaar wird zur Laufzeit hierhin geschrieben (siehe RsaSigningKeyStore)
+# und muss deshalb schon vor dem Wechsel auf den nicht-root-Benutzer beschreibbar sein.
+RUN mkdir -p /app/keys && chown -R $APP_UID /app/keys
+
 USER $APP_UID
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "Auth.Api.dll"]
