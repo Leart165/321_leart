@@ -1,9 +1,8 @@
-# Lokale Entwicklung: Infrastruktur fuer Tests und dotnet run.
+# Lokale Entwicklung: alles aus dem Quellcode gebaut.
 # Das Deployment des Gesamtsystems liegt im Shared-Repo m321-main.
 #
-#   docker compose up -d        Postgres und RabbitMQ, den Dienst dann mit dotnet run
-#
-# Der Dienst selbst kommt hier dazu, sobald es ein Dockerfile gibt (Schritt 4).
+#   docker compose up --build -d    einmal alles
+#   docker compose up -d analyticsdb rabbitmq    nur Infrastruktur, Dienst mit dotnet run
 #
 name: analytics
 
@@ -40,6 +39,25 @@ services:
       timeout: 10s
       retries: 12
       start_period: 20s
+
+  analytics-api:
+    build:
+      context: .
+      dockerfile: src/Analytics.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      ConnectionStrings__AnalyticsDb: "Host=analyticsdb;Port=5432;Database=analytics;Username=analytics;Password=analytics"
+      RabbitMq__Host: rabbitmq
+      Auth__Issuer: "https://auth.fischerfocus.com/realms/personal"
+      Auth__Audience: "m321-analytics-api"
+    ports:
+      - "8082:8080"
+    depends_on:
+      analyticsdb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
 volumes:
   analyticsdb-data:
