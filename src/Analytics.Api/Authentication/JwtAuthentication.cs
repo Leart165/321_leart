@@ -15,6 +15,7 @@ public static class JwtAuthentication
     public const string RoleClaimType = "role";
 
     public const string AccessTokenType = "Bearer";
+    public const string AdminRole = "bank-admin";
 
     private const string IssuedAtClaim = "iat";
 

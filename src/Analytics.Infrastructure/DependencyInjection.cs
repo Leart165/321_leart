@@ -25,6 +25,7 @@ public static class DependencyInjection
         services.AddScoped<ITotalsStore, TotalsStore>();
         services.AddScoped<LedgerProjection>();
         services.AddScoped<IMonthlyTotalsReader, MonthlyTotalsReader>();
+        services.AddScoped<IDailyTotalsReader, DailyTotalsReader>();
 
         services.Configure<MessagingOptions>(configuration.GetSection(MessagingOptions.SectionName));
         services.AddSingleton<RabbitMqConnection>();

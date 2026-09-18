@@ -24,6 +24,17 @@ public sealed class AccessTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task SystemDaily_without_a_token_is_unauthorized()
+    {
+        using HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync(
+            "/v1/analytics/system/daily?from=2026-09-01&to=2026-09-30");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Health_is_reachable_without_a_token()
     {
         using HttpClient client = _factory.CreateClient();
