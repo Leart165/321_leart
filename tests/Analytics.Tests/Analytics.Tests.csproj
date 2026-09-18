@@ -4,9 +4,11 @@
     <ProjectReference Include="..\..\src\Analytics.Domain\Analytics.Domain.csproj" />
     <ProjectReference Include="..\..\src\Analytics.Application\Analytics.Application.csproj" />
     <ProjectReference Include="..\..\src\Analytics.Infrastructure\Analytics.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Analytics.Api\Analytics.Api.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.12" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <PackageReference Include="Npgsql" Version="10.0.3" />

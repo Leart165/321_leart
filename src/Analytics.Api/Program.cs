@@ -1,3 +1,4 @@
+using Analytics.Api.Authentication;
 using Analytics.Api.Middleware;
 using Analytics.Infrastructure;
 using Analytics.Infrastructure.Persistence;
@@ -8,6 +9,8 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddAnalyticsCore(builder.Configuration);
 builder.Services.AddDatabaseMigration();
 builder.Services.AddLedgerConsumer();
+
+builder.Services.AddJwtAuthentication(builder.Configuration);
 
 builder.Services.AddControllers(options =>
 {
@@ -27,6 +30,9 @@ app.UseExceptionHandler();
 app.UseCorrelationId();
 app.UseSwagger();
 app.UseSwaggerUI();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 
