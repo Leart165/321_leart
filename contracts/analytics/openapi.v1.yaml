@@ -1,0 +1,303 @@
+openapi: 3.0.3
+
+info:
+  title: Analytics API
+  version: 1.0.0
+  description: |
+    Auswertungsdienst der Bank-App. Er hält eine eigene Datenbank und kennt Buchungen
+    ausschliesslich aus dem Ereignis transaction.completed, das er über die Queue
+    analytics.ledger konsumiert. Er greift nie auf die Datenbank des Kontendienstes zu.
+
+    Gespeichert werden nur verdichtete Summen, nie einzelne Buchungen: je Inhaber und Monat
+    (owner_monthly) und für die gesamte Bank je Tag (system_daily). Jedes Ereignis wird genau
+    einmal verrechnet, auch wenn es mehrfach ankommt; die Verrechnung erkennt Duplikate an
+    transactionId.
+  contact:
+    name: Leart Mena
+
+servers:
+  - url: http://localhost:8082
+    description: Lokal
+  - url: http://analytics-api:8080
+    description: Innerhalb des Compose-Netzwerks
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: analytics
+    description: Verdichtete Auswertungen
+  - name: operations
+    description: Betrieb
+
+paths:
+  /v1/analytics/me/monthly:
+    get:
+      tags: [analytics]
+      operationId: getMyMonthly
+      summary: Eigene Monatssummen
+      description: |
+        Liefert für den Inhaber aus dem sub-Claim des Tokens die Summen je Monat und Währung
+        des angefragten Jahres. Ein gültiges Access Token genügt, eine bestimmte Rolle ist
+        nicht nötig. Ein Monat ohne Buchung erscheint nicht in der Liste.
+      parameters:
+        - $ref: '#/components/parameters/Year'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Monatssummen des angefragten Jahres, leer wenn es keine Buchungen gibt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MonthlyTotal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/analytics/system/daily:
+    get:
+      tags: [analytics]
+      operationId: getSystemDaily
+      summary: Tagessummen der gesamten Bank
+      description: |
+        Liefert die Tagessummen aller Inhaber für den angefragten Zeitraum, beide Grenzen
+        eingeschlossen. Verlangt im Token die Realm-Rolle bank-admin, siehe
+        components/securitySchemes/bearerAuth.
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Tagessummen des angefragten Zeitraums, leer wenn es keine Buchungen gibt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DailyTotal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /health:
+    get:
+      tags: [operations]
+      operationId: health
+      summary: Bereitschaft des Dienstes
+      description: |
+        Ohne Token erreichbar. Prüft die eigene Datenbank. Der Broker gehört bewusst nicht
+        dazu: steht RabbitMQ kurz still, macht ihn das nicht unbereit, der Konsument holt die
+        Ereignisse nach, sobald der Broker zurück ist.
+      security: []
+      responses:
+        '200':
+          description: Bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+        '503':
+          description: Nicht bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access Token des Keycloak auf auth.fischerfocus.com, Realm personal. Geprüft wird:
+
+        | Claim/Merkmal | Anforderung |
+        |---|---|
+        | Algorithmus | ES256, jeder andere wird abgelehnt |
+        | iss | https://auth.fischerfocus.com/realms/personal |
+        | aud | muss m321-analytics-api enthalten |
+        | typ | muss Bearer sein, ein ID Token wird abgelehnt |
+        | sub | Benutzer-Id, wird für me/monthly als ownerId verwendet |
+        | iat | muss vorhanden sein |
+
+        Für system/daily zusätzlich: realm_access.roles muss bank-admin enthalten, sonst 403.
+        Der Algorithmus ist fest vorgegeben und wird nicht aus dem Token übernommen.
+
+  parameters:
+    Year:
+      name: year
+      in: query
+      required: true
+      description: Kalenderjahr, für das die Monatssummen geliefert werden
+      schema:
+        type: integer
+        minimum: 2000
+        maximum: 2100
+        example: 2026
+
+    From:
+      name: from
+      in: query
+      required: true
+      description: Erster Tag des Zeitraums, eingeschlossen
+      schema:
+        type: string
+        format: date
+        example: '2026-09-01'
+
+    To:
+      name: to
+      in: query
+      required: true
+      description: Letzter Tag des Zeitraums, eingeschlossen. Darf nicht vor from liegen
+      schema:
+        type: string
+        format: date
+        example: '2026-09-30'
+
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 100
+
+  schemas:
+    Currency:
+      type: string
+      description: Währung nach ISO 4217, Grossbuchstaben
+      pattern: '^[A-Z]{3}$'
+      example: CHF
+
+    MonthlyTotal:
+      type: object
+      description: |
+        Summe eines Monats in einer Währung. Income sind Einzahlungen und eingehende
+        Überweisungen, Expenses sind Auszahlungen und ausgehende Überweisungen, Net ist
+        Income minus Expenses. Transactions zählt alle Buchungen, die eingeflossen sind.
+      required: [year, month, currency, income, expenses, net, transactions]
+      additionalProperties: false
+      properties:
+        year:
+          type: integer
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        currency:
+          $ref: '#/components/schemas/Currency'
+        income:
+          type: number
+          format: decimal
+          minimum: 0
+        expenses:
+          type: number
+          format: decimal
+          minimum: 0
+        net:
+          type: number
+          format: decimal
+          description: income minus expenses, kann negativ sein
+        transactions:
+          type: integer
+          minimum: 0
+
+    DailyTotal:
+      type: object
+      description: |
+        Summe eines Tages über alle Inhaber in einer Währung. Volume ist die Summe aus
+        Einzahlungen, Auszahlungen und ausgehenden Überweisungen; eingehende Überweisungen
+        zählen nicht mit, sonst würde jede Überweisung doppelt gezählt. Transfers zählt eine
+        Überweisung nur bei der ausgehenden Seite.
+      required: [day, currency, volume, deposits, withdrawals, transfers]
+      additionalProperties: false
+      properties:
+        day:
+          type: string
+          format: date
+        currency:
+          $ref: '#/components/schemas/Currency'
+        volume:
+          type: number
+          format: decimal
+          minimum: 0
+        deposits:
+          type: integer
+          minimum: 0
+        withdrawals:
+          type: integer
+          minimum: 0
+        transfers:
+          type: integer
+          minimum: 0
+
+    HealthReport:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [Healthy, Degraded, Unhealthy]
+        entries:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              description:
+                type: string
+
+    ProblemDetails:
+      type: object
+      description: Fehlerbeschreibung nach RFC 7807
+      required: [status, title]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+        correlationId:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Die Eingabe ist ungültig, etwa ein Jahr ausserhalb des erlaubten Bereichs oder from nach to
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    Unauthorized:
+      description: |
+        Kein Token, oder das Token ist ungültig: falscher Aussteller, falsche Audience,
+        abgelaufen, falscher Algorithmus, kein Access Token, oder sub oder iat fehlen.
+      headers:
+        WWW-Authenticate:
+          description: Nennt das Schema Bearer und, falls bekannt, den Grund
+          schema:
+            type: string
+
+    Forbidden:
+      description: Das Token ist gültig, aber realm_access.roles enthält nicht bank-admin
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
