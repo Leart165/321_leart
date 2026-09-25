@@ -2,7 +2,10 @@ using Analytics.Api.Authentication;
 using Analytics.Api.Middleware;
 using Analytics.Infrastructure;
 using Analytics.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using System.Text.Json;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -35,8 +38,31 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = WriteHealthReportAsync
+});
 
 app.Run();
+
+static Task WriteHealthReportAsync(HttpContext context, HealthReport report)
+{
+    context.Response.ContentType = "application/json";
+
+    var body = new
+    {
+        status = report.Status.ToString(),
+        entries = report.Entries.ToDictionary(
+            entry => entry.Key,
+            entry => new
+            {
+                status = entry.Value.Status.ToString(),
+                description = entry.Value.Description
+            })
+    };
+
+    return context.Response.WriteAsync(JsonSerializer.Serialize(body));
+}
 
 public partial class Program
 {

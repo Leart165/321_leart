@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using System.Net;
 using Xunit;
 
@@ -6,11 +8,21 @@ namespace Analytics.Tests.Api;
 
 public sealed class AccessTests : IClassFixture<WebApplicationFactory<Program>>
 {
+    private static readonly string TestConnectionString =
+        Environment.GetEnvironmentVariable("ANALYTICS_TEST_CONNECTION")
+        ?.Replace("Database=postgres", "Database=analytics")
+        ?? "Host=localhost;Port=5435;Database=analytics;Username=analytics;Password=analytics";
+
     private readonly WebApplicationFactory<Program> _factory;
 
     public AccessTests(WebApplicationFactory<Program> factory)
     {
-        _factory = factory;
+        _factory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:AnalyticsDb"] = TestConnectionString
+                })));
     }
 
     [Fact]
@@ -41,6 +53,6 @@ public sealed class AccessTests : IClassFixture<WebApplicationFactory<Program>>
 
         HttpResponseMessage response = await client.GetAsync("/health");
 
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 }
