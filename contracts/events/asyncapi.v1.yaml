@@ -1,0 +1,369 @@
+asyncapi: 3.0.0
+
+info:
+  title: Bank Events
+  version: 1.0.0
+  description: |
+    Alle Ereignisse, die zwischen den Diensten der Bank-App fliessen.
+
+    Ein einziger Topic-Exchange namens bank.events, die Routing Keys unterscheiden die
+    Ereignisse. Jeder Dienst deklariert seine eigenen Queues und bindet sie an die Keys, die
+    ihn interessieren. Niemand deklariert die Queue eines anderen Dienstes.
+
+    Zustellgarantie ist "mindestens einmal". Jeder Konsument muss doppelte Nachrichten
+    verkraften, erkennbar am Kopf message-id.
+
+    Neben bank.events gibt es den Direct-Exchange bank.dlx. Jede Queue nennt ihn als
+    Dead-Letter-Exchange und ihren eigenen Namen als Dead-Letter-Routing-Key; die zugehoerige
+    .dlq ist an genau diesen Key gebunden. Eine Nachricht, die nicht verarbeitet werden kann,
+    wird abgelehnt statt endlos wiederholt und landet in der .dlq genau der Queue, aus der sie
+    stammt. Ein Fanout waere hier falsch: dann laege jede verworfene Nachricht in jeder
+    Dead-Letter-Queue und niemand wuesste mehr, woher sie kam.
+
+  contact:
+    name: Tim Fischer
+    url: https://github.com/Tim-Fischer-zh/m321
+  license:
+    name: Nur für die Ausbildung, keine Weitergabe
+  tags:
+    - name: bank
+      description: Ereignisse der Bank-App
+    - name: m321
+      description: Modul M321, verteilte Systeme
+
+defaultContentType: application/json
+
+servers:
+  broker:
+    host: rabbitmq:5672
+    protocol: amqp
+    description: RabbitMQ im Compose-Netzwerk
+
+channels:
+  transferRequested:
+    address: transfer.requested
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: bank.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: Ein Überweisungsauftrag wurde angenommen und wartet auf Ausführung.
+    messages:
+      TransferRequested:
+        $ref: '#/components/messages/TransferRequested'
+
+  transactionCompleted:
+    address: transaction.completed
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: bank.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: Eine Buchung ist erfolgt. Pro Überweisung entstehen zwei Ereignisse.
+    messages:
+      TransactionCompleted:
+        $ref: '#/components/messages/TransactionCompleted'
+
+  accountOpened:
+    address: account.opened
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: bank.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: Ein Konto wurde eröffnet.
+    messages:
+      AccountOpened:
+        $ref: '#/components/messages/AccountOpened'
+
+  userRegistered:
+    address: user.registered
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: bank.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: Ein Benutzer hat sich registriert. Kommt vom Auth-Service.
+    messages:
+      UserRegistered:
+        $ref: '#/components/messages/UserRegistered'
+
+operations:
+  publishTransferRequested:
+    action: send
+    channel:
+      $ref: '#/channels/transferRequested'
+    summary: accounts-api meldet einen angenommenen Auftrag.
+    description: |
+      Geschrieben in derselben Transaktion wie der Auftrag selbst, über die Outbox.
+      Damit geht kein Ereignis verloren, auch wenn der Broker gerade steht.
+
+  consumeTransferRequested:
+    x-queue:
+      name: accounts.transfers
+      consumer: accounts-worker
+      durable: true
+      prefetch: 10
+      deadLetterExchange: bank.dlx
+      deadLetterQueue: accounts.transfers.dlq
+    action: receive
+    channel:
+      $ref: '#/channels/transferRequested'
+    summary: accounts-worker führt den Auftrag aus, Queue accounts.transfers.
+    description: |
+      Der Worker bucht ab und schreibt gut. Er dedupliziert über message-id in derselben
+      Transaktion wie die Buchung. Reicht das Guthaben nicht mehr, endet der Auftrag als failed.
+
+  publishTransactionCompleted:
+    action: send
+    channel:
+      $ref: '#/channels/transactionCompleted'
+    summary: accounts-worker meldet eine erfolgte Buchung.
+    description: |
+      Pro Überweisung entstehen zwei Ereignisse, eines je beteiligtem Konto.
+      Ein- und Auszahlungen erzeugen jeweils eines.
+
+  consumeTransactionCompleted:
+    x-queue:
+      name: statements.ledger
+      consumer: statements-api
+      durable: true
+      prefetch: 10
+      deadLetterExchange: bank.dlx
+      deadLetterQueue: statements.ledger.dlq
+    action: receive
+    channel:
+      $ref: '#/channels/transactionCompleted'
+    summary: statements-api schreibt den Auszugseintrag, Queue statements.ledger.
+    description: |
+      Der Auszugsdienst führt daraus seine eigene Sicht. Er fragt nie die Datenbank des
+      Kontendienstes ab. Kommt ein Ereignis doppelt, erkennt er das an message-id.
+
+  publishAccountOpened:
+    action: send
+    channel:
+      $ref: '#/channels/accountOpened'
+    summary: accounts-api und accounts-worker melden ein neues Konto.
+    description: |
+      Beide können Konten eröffnen: die API auf Anfrage, der Worker nach user.registered.
+
+  consumeAccountOpened:
+    x-queue:
+      name: statements.ledger
+      consumer: statements-api
+      durable: true
+      prefetch: 10
+      deadLetterExchange: bank.dlx
+      deadLetterQueue: statements.ledger.dlq
+    action: receive
+    channel:
+      $ref: '#/channels/accountOpened'
+    summary: statements-api merkt sich das Konto, Queue statements.ledger.
+    description: |
+      Erst danach kann er für dieses Konto einen Auszug liefern. Trifft eine Buchung zu einem
+      unbekannten Konto ein, legt er den Eintrag trotzdem an.
+
+  consumeUserRegistered:
+    x-queue:
+      name: accounts.users
+      consumer: accounts-worker
+      durable: true
+      prefetch: 10
+      deadLetterExchange: bank.dlx
+      deadLetterQueue: accounts.users.dlq
+    action: receive
+    channel:
+      $ref: '#/channels/userRegistered'
+    summary: accounts-worker eröffnet ein Standardkonto, Queue accounts.users.
+    description: |
+      Idempotent: hat der Benutzer schon ein Standardkonto, geschieht nichts. Bei parallel
+      laufenden Workern entscheidet der Primärschlüssel der Datenbank, nicht der Code.
+
+components:
+  messageTraits:
+    commonHeaders:
+      headers:
+        type: object
+        required: [message-id, correlation-id, type, schema-version]
+        properties:
+          message-id:
+            type: string
+            format: uuid
+            description: Eindeutig je Ereignis. Grundlage der Deduplizierung beim Konsumenten.
+          correlation-id:
+            type: string
+            maxLength: 100
+            description: Zieht sich durch die ganze Kette, auch über HTTP-Grenzen.
+          traceparent:
+            type: string
+            description: W3C Trace Context, damit der Trace über den Broker weiterläuft.
+          type:
+            type: string
+            description: Name des Ereignisses.
+          schema-version:
+            type: integer
+            description: Version dieses Nachrichtenschemas.
+            enum: [1]
+
+  messages:
+    TransferRequested:
+      name: TransferRequested
+      title: Überweisungsauftrag angenommen
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/TransferRequested'
+
+    TransactionCompleted:
+      name: TransactionCompleted
+      title: Buchung erfolgt
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/TransactionCompleted'
+
+    AccountOpened:
+      name: AccountOpened
+      title: Konto eröffnet
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/AccountOpened'
+
+    UserRegistered:
+      name: UserRegistered
+      title: Benutzer registriert
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/UserRegistered'
+
+  schemas:
+    TransferRequested:
+      type: object
+      required: [transferId, sourceAccountId, targetAccountId, amount, currency, requestedAt]
+      additionalProperties: false
+      properties:
+        transferId:
+          type: string
+          format: uuid
+        sourceAccountId:
+          type: string
+          format: uuid
+        targetAccountId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: decimal
+          description: >-
+            Exakter Dezimalbetrag mit hoechstens zwei Nachkommastellen. Ausdruecklich nicht
+            als Gleitkommazahl behandeln: 0.1 + 0.2 ergibt dort 0.30000000000000004, und
+            solche Fehler summieren sich in einem Buchungsjournal auf.
+          exclusiveMinimum: 0
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        description:
+          type: string
+          maxLength: 200
+        requestedAt:
+          type: string
+          format: date-time
+
+    TransactionCompleted:
+      type: object
+      required: [transactionId, accountId, ownerId, kind, amount, currency, bookedAt]
+      additionalProperties: false
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        accountId:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          maxLength: 100
+        kind:
+          type: string
+          enum: [Deposit, Withdrawal, TransferOut, TransferIn]
+        amount:
+          type: number
+          format: decimal
+          description: >-
+            Exakter Dezimalbetrag mit hoechstens zwei Nachkommastellen. Ausdruecklich nicht
+            als Gleitkommazahl behandeln: 0.1 + 0.2 ergibt dort 0.30000000000000004, und
+            solche Fehler summieren sich in einem Buchungsjournal auf.
+          exclusiveMinimum: 0
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        description:
+          type: string
+          maxLength: 200
+        bookedAt:
+          type: string
+          format: date-time
+        transferId:
+          type: string
+          format: uuid
+          description: Gesetzt, wenn die Buchung zu einer Überweisung gehört.
+
+    AccountOpened:
+      type: object
+      required: [accountId, ownerId, currency, openedAt]
+      additionalProperties: false
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          maxLength: 100
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        openedAt:
+          type: string
+          format: date-time
+
+    UserRegistered:
+      type: object
+      required: [userId]
+      additionalProperties: true
+      description: |
+        Kommt vom Auth-Service. Bewusst als Tolerant Reader ausgelegt: zusätzliche Felder sind
+        erlaubt und werden ignoriert, damit Leart sein Ereignis erweitern kann, ohne dass der
+        Kontendienst bricht. Zwingend ist allein userId.
+      properties:
+        userId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        registeredAt:
+          type: string
+          format: date-time

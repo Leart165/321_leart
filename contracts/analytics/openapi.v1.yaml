@@ -6,7 +6,8 @@ info:
   description: |
     Auswertungsdienst der Bank-App. Er hält eine eigene Datenbank und kennt Buchungen
     ausschliesslich aus dem Ereignis transaction.completed, das er über die Queue
-    analytics.ledger konsumiert. Er greift nie auf die Datenbank des Kontendienstes zu.
+    analytics.ledger konsumiert, siehe contracts/analytics/asyncapi.v1.yaml. Er greift nie auf
+    die Datenbank des Kontendienstes zu.
 
     Gespeichert werden nur verdichtete Summen, nie einzelne Buchungen: je Inhaber und Monat
     (owner_monthly) und für die gesamte Bank je Tag (system_daily). Jedes Ereignis wird genau
@@ -65,7 +66,7 @@ paths:
       description: |
         Liefert die Tagessummen aller Inhaber für den angefragten Zeitraum, beide Grenzen
         eingeschlossen. Verlangt im Token die Realm-Rolle bank-admin, siehe
-        components/securitySchemes/bearerAuth.
+        components/securitySchemes/bearerAuth. from und to sind beide Pflicht.
       parameters:
         - $ref: '#/components/parameters/From'
         - $ref: '#/components/parameters/To'
@@ -167,6 +168,7 @@ components:
       name: X-Correlation-Id
       in: header
       required: false
+      description: Zieht sich durch alle Aufrufe. Fehlt der Kopf, erzeugt der Dienst einen Wert.
       schema:
         type: string
         maxLength: 100
@@ -189,27 +191,33 @@ components:
       properties:
         year:
           type: integer
+          example: 2026
         month:
           type: integer
           minimum: 1
           maximum: 12
+          example: 9
         currency:
           $ref: '#/components/schemas/Currency'
         income:
           type: number
           format: decimal
           minimum: 0
+          example: 2500.00
         expenses:
           type: number
           format: decimal
           minimum: 0
+          example: 980.50
         net:
           type: number
           format: decimal
           description: income minus expenses, kann negativ sein
+          example: 1519.50
         transactions:
           type: integer
           minimum: 0
+          example: 12
 
     DailyTotal:
       type: object
@@ -224,21 +232,26 @@ components:
         day:
           type: string
           format: date
+          example: '2026-09-18'
         currency:
           $ref: '#/components/schemas/Currency'
         volume:
           type: number
           format: decimal
           minimum: 0
+          example: 15230.00
         deposits:
           type: integer
           minimum: 0
+          example: 40
         withdrawals:
           type: integer
           minimum: 0
+          example: 22
         transfers:
           type: integer
           minimum: 0
+          example: 8
 
     HealthReport:
       type: object

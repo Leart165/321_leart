@@ -1,0 +1,264 @@
+openapi: 3.0.3
+
+info:
+  title: Auth API
+  version: 1.0.0
+  description: |
+    Authentifizierungsdienst der Bank-App. Verwaltet Benutzer, stellt JWTs aus und
+    veröffentlicht seine öffentlichen Schlüssel.
+
+    ACHTUNG: Dieser Kontrakt ist ein Vorschlag, damit der Kontendienst gegen etwas
+    Festgelegtes bauen kann. Verantwortlich für die Implementierung ist Leart, und der
+    Kontrakt gilt erst als vereinbart, wenn er ihn bestätigt hat. Was der Kontendienst
+    wirklich braucht, steht am Ende dieser Beschreibung.
+
+    Der Kontendienst braucht davon genau zwei Dinge:
+      1. GET /.well-known/jwks.json, um Token prüfen zu können.
+      2. Das Ereignis user.registered auf dem Exchange bank.events, siehe
+         contracts/events/asyncapi.v1.yaml.
+    Alles andere hier ist für die Bedienung durch den Benutzer da und den Kontendienst
+    nicht weiter von Belang.
+  contact:
+    name: Leart
+
+servers:
+  - url: http://localhost:8081
+    description: Lokal
+  - url: http://auth-service:8080
+    description: Innerhalb des Compose-Netzwerks
+
+tags:
+  - name: auth
+    description: Registrieren und Anmelden
+  - name: users
+    description: Benutzer
+  - name: keys
+    description: Schlüssel zur Token-Prüfung
+  - name: operations
+    description: Betrieb
+
+paths:
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Benutzer registrieren
+      description: |
+        Legt den Benutzer an und publiziert anschliessend user.registered auf bank.events.
+        Der Kontendienst eröffnet daraufhin ein Standardkonto in CHF.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Benutzer angelegt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Diese E-Mail-Adresse ist bereits vergeben
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Anmelden und Token erhalten
+      description: |
+        Prüft die Zugangsdaten und stellt ein JWT nach jwt.md aus.
+        Der sub-Claim trägt die Benutzer-Id, die beim Kontendienst als ownerId gilt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Angemeldet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: E-Mail-Adresse oder Passwort falsch
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /v1/users/{userId}:
+    get:
+      tags: [users]
+      operationId: getUser
+      summary: Benutzer abfragen
+      description: |
+        Liefert die Stammdaten eines Benutzers. Der Kontendienst braucht diesen Endpunkt
+        nicht, er kennt Benutzer ausschliesslich über ihre Id.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        '200':
+          description: Der Benutzer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Kein oder ungültiges Token
+        '404':
+          description: Unbekannter Benutzer
+
+  /health:
+    get:
+      tags: [operations]
+      operationId: health
+      summary: Bereitschaft des Dienstes
+      description: Prüft die eigene Datenbank.
+      responses:
+        '200':
+          description: Bereit
+        '503':
+          description: Nicht bereit
+
+  /.well-known/jwks.json:
+    get:
+      tags: [keys]
+      operationId: jwks
+      summary: Öffentliche Schlüssel zur Token-Prüfung
+      description: |
+        Der Kontendienst liest hier die Schlüssel, mit denen er die Signatur eingehender
+        Token prüft. Diese Adresse ist die einzige harte Abhängigkeit des Kontendienstes
+        von diesem Dienst. Sie muss ohne Token erreichbar sein.
+      responses:
+        '200':
+          description: Schlüsselsatz nach RFC 7517
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Jwks'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 200
+        password:
+          type: string
+          minLength: 8
+          maxLength: 200
+        displayName:
+          type: string
+          maxLength: 100
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    TokenResponse:
+      type: object
+      required: [accessToken, tokenType, expiresIn]
+      properties:
+        accessToken:
+          type: string
+          description: JWT, Aufbau siehe jwt.md
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
+          type: integer
+          description: Restlaufzeit in Sekunden
+
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+          maxLength: 100
+          description: Diese Id landet als ownerId beim Kontendienst und als sub im Token.
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        registeredAt:
+          type: string
+          format: date-time
+
+    Jwks:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, kid, use, alg]
+            properties:
+              kty:
+                type: string
+              kid:
+                type: string
+              use:
+                type: string
+              alg:
+                type: string
+              n:
+                type: string
+              e:
+                type: string
+
+    ProblemDetails:
+      type: object
+      required: [status, title]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Die Eingabe ist ungültig
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

@@ -41,7 +41,10 @@ public static class DependencyInjection
 
     public static IServiceCollection AddLedgerConsumer(this IServiceCollection services)
     {
-        services.AddHostedService<TransactionCompletedConsumer>();
+        services.AddSingleton(AsyncApiSchemas.FromEmbeddedContracts());
+        services.AddScoped<TransactionCompletedHandler>();
+        services.AddHostedService<PartnerTransactionsConsumer>();
+        services.AddHostedService<LegacyLedgerConsumer>();
         return services;
     }
 

@@ -77,6 +77,25 @@ public sealed class TotalsStoreTests : IClassFixture<PostgresFixture>, IAsyncLif
         Assert.Equal(1, daily.Deposits);
     }
 
+    // Zwei Instanzen bekommen dieselbe Buchung gleichzeitig, etwa aus analytics.ledger und
+    // analytics.partner. Die Eindeutigkeit sichert die Datenbank, nicht der Speicher eines Prozesses.
+    [Fact]
+    public async Task The_same_transaction_applied_concurrently_counts_once()
+    {
+        for (int round = 0; round < 20; round++)
+        {
+            await _postgres.ResetAsync();
+            BookedTransaction booking = Booking(TransactionKind.Deposit, 100m);
+
+            bool[] counted = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(() => ApplyAsync(booking))));
+
+            Assert.Equal(1, counted.Count(result => result));
+            OwnerMonthly monthly = await SingleMonthlyAsync();
+            Assert.Equal(1, monthly.Transactions);
+            Assert.Equal(100m, monthly.Income);
+        }
+    }
+
     [Fact]
     public async Task A_booking_late_on_the_last_of_september_lands_in_september()
     {

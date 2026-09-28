@@ -1,28 +1,38 @@
 using Analytics.Api.Authentication;
+using Analytics.Api.Frontend;
+using Analytics.Api.Hosting;
 using Analytics.Api.Middleware;
+using Analytics.Api.Observability;
+using Analytics.Api.OpenApi;
 using Analytics.Infrastructure;
+using Analytics.Infrastructure.Observability;
 using Analytics.Infrastructure.Persistence;
-using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
-using System.Text.Json;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+
+// Metriken und Traces an den Sammler, sofern OTEL_EXPORTER_OTLP_ENDPOINT gesetzt ist.
+builder.AddAnalyticsObservability("analytics-api");
+builder.Services.AddServerTracing();
 
 builder.Services.AddAnalyticsCore(builder.Configuration);
 builder.Services.AddDatabaseMigration();
 builder.Services.AddLedgerConsumer();
 
 builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddScopePolicies();
+builder.Services.AddFrontend(builder.Configuration);
 
 builder.Services.AddControllers(options =>
 {
     options.SuppressAsyncSuffixInActionNames = false;
 });
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<DatabaseUnavailableHandler>();
 
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddVersionedSwagger();
+
+// Bereitschaft auf dem internen Port und Abfliessen beim Stoppen; Port und Dauer setzt das Dockerfile.
+builder.Services.AddReadiness(builder.Configuration);
 
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AnalyticsDbContext>("database");
@@ -31,38 +41,17 @@ WebApplication app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseCorrelationId();
-app.UseSwagger();
-app.UseSwaggerUI();
+app.UseFrontend();
+app.UseVersionedSwagger();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHealthChecks("/health", new HealthCheckOptions
-{
-    ResponseWriter = WriteHealthReportAsync
-});
+app.MapFrontend();
+app.MapReadiness();
 
 app.Run();
-
-static Task WriteHealthReportAsync(HttpContext context, HealthReport report)
-{
-    context.Response.ContentType = "application/json";
-
-    var body = new
-    {
-        status = report.Status.ToString(),
-        entries = report.Entries.ToDictionary(
-            entry => entry.Key,
-            entry => new
-            {
-                status = entry.Value.Status.ToString(),
-                description = entry.Value.Description
-            })
-    };
-
-    return context.Response.WriteAsync(JsonSerializer.Serialize(body));
-}
 
 public partial class Program
 {

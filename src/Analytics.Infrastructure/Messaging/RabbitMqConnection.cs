@@ -15,6 +15,11 @@ public sealed class RabbitMqConnection : IAsyncDisposable
         _options = options.Value;
     }
 
+    public string Host
+    {
+        get { return _options.Host; }
+    }
+
     public async Task<IConnection> GetAsync(CancellationToken cancellationToken)
     {
         if (_connection is { IsOpen: true })
@@ -30,15 +35,22 @@ public sealed class RabbitMqConnection : IAsyncDisposable
                 return _connection;
             }
 
+            if (_connection is not null)
+            {
+                await _connection.DisposeAsync();
+                _connection = null;
+            }
+
             ConnectionFactory factory = new ConnectionFactory
             {
                 HostName = _options.Host,
                 Port = _options.Port,
                 UserName = _options.User,
                 Password = _options.Password,
+                VirtualHost = _options.VirtualHost,
                 AutomaticRecoveryEnabled = true,
                 TopologyRecoveryEnabled = true,
-                ClientProvidedName = "analytics-api"
+                ClientProvidedName = $"{_options.ClientName} {Environment.MachineName}"
             };
 
             _connection = await factory.CreateConnectionAsync(cancellationToken);

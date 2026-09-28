@@ -1,0 +1,264 @@
+openapi: 3.0.3
+
+info:
+  title: Statements API
+  version: 2.0.0
+  description: |
+    Auszugsdienst der Bank-App, Version 2. Fachlich derselbe Auszug wie Version 1: Buchungen
+    aus der eigenen Datenbank, dazu der Saldo.
+
+    Der Unterschied ist der Zugriff. Version 2 verlangt ein gültiges Bearer-Token nach
+    contracts/auth/jwt.md mit dem Scope statements:read (contracts/auth/scopes.md); fehlt er,
+    antwortet sie mit 403, bevor sie irgendeine Id ansieht. Sie zeigt nur Auszüge eigener
+    Konten. Den Inhaber eines Kontos kennt der Dienst aus dem Ereignis account.opened, er prüft
+    den Besitz also selbst und ohne den Kontendienst zu fragen. Ein fremdes Konto wird genauso
+    beantwortet wie ein unbekanntes: mit 404. Ein 403 an dieser Stelle würde verraten, dass es
+    die Id gibt.
+
+    Den Saldo holt er über Version 2 des Kontendienstes und reicht dafür das Token des
+    Aufrufers weiter. Dafür braucht das Token zusätzlich den Scope accounts:read und damit die
+    Audience m321-accounts-api. Antwortet der Kontendienst mit 404, antwortet auch der Auszug
+    mit 404. Ist der Kontendienst nicht erreichbar oder lehnt er das Token ab, weil ihm dieser
+    Scope fehlt, liefert der Auszug die Summe seiner eigenen Einträge und markiert das im Feld
+    balanceSource. Ein Partner, dem der Kunde nur statements:read erlaubt hat, bekommt so
+    seinen Auszug, aber keinen Zugang zum Kontendienst.
+
+    Version 1 läuft unverändert daneben, bis alle Konsumenten umgestellt sind.
+  contact:
+    name: Tim Fischer
+
+servers:
+  - url: http://localhost:8081
+    description: Lokal
+  - url: http://statements-api:8080
+    description: Innerhalb des Compose-Netzwerks
+
+security:
+  - keycloak: []
+
+tags:
+  - name: statements
+    description: Kontoauszug eigener Konten
+  - name: operations
+    description: Betrieb
+
+paths:
+  /v2/statements/{accountId}:
+    get:
+      tags: [statements]
+      operationId: getStatement
+      security:
+        - keycloak: [statements:read]
+      summary: Kontoauszug eines eigenen Kontos
+      description: |
+        Liefert die Buchungen aus der eigenen Datenbank und dazu den Saldo, siehe
+        balanceSource. Gehört das Konto einem anderen Benutzer, lautet die Antwort 404.
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          required: false
+          description: Nur Buchungen ab diesem Zeitpunkt
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Nur Buchungen bis zu diesem Zeitpunkt
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Der Auszug
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Statement'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /health:
+    get:
+      tags: [operations]
+      operationId: health
+      summary: Bereitschaft des Dienstes
+      description: |
+        Ohne Token erreichbar. Prüft die eigene Datenbank. Der Kontendienst gehört bewusst
+        nicht dazu: sein Ausfall macht diesen Dienst nicht unbereit, nur weniger genau.
+      security: []
+      responses:
+        '200':
+          description: Bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+        '503':
+          description: Nicht bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+
+components:
+  securitySchemes:
+    keycloak:
+      type: oauth2
+      description: |
+        Access Token des Keycloak, Aufbau und Prüfung nach contracts/auth/jwt.md. Welcher Scope
+        wofür nötig ist, steht an jeder Operation und in contracts/auth/scopes.md. Ein Token
+        ohne den Scope einer Operation bekommt 403.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.fischerfocus.com/realms/personal/protocol/openid-connect/auth
+          tokenUrl: https://auth.fischerfocus.com/realms/personal/protocol/openid-connect/token
+          scopes:
+            statements:read: Kontoauszüge eigener Konten lesen
+        clientCredentials:
+          tokenUrl: https://auth.fischerfocus.com/realms/personal/protocol/openid-connect/token
+          scopes:
+            statements:read: Kontoauszüge eigener Konten lesen
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 100
+
+  responses:
+    Unauthorized:
+      description: |
+        Kein Token, oder das Token ist ungültig: falscher Aussteller, falsche Audience,
+        abgelaufen, falscher Algorithmus, kein Access Token, oder sub oder iat fehlen.
+        Die Antwort hat keinen Körper.
+      headers:
+        WWW-Authenticate:
+          description: Nennt das Schema Bearer und, falls bekannt, den Grund
+          schema:
+            type: string
+
+    Forbidden:
+      description: |
+        Das Token ist gültig, trägt aber den Scope dieser Operation nicht. Der Kunde hat dem
+        Client diesen Zugriff nicht erlaubt. Die Antwort hat keinen Körper.
+      headers:
+        WWW-Authenticate:
+          description: Nennt nach RFC 6750 error="insufficient_scope" und den fehlenden Scope
+          schema:
+            type: string
+
+    NotFound:
+      description: Das Konto ist hier unbekannt oder gehört einem anderen Benutzer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+  schemas:
+    BalanceSource:
+      type: string
+      description: |
+        live heisst, der Saldo kam frisch vom Kontendienst.
+        cached heisst, der Kontendienst war nicht erreichbar und der Wert ist die Summe der
+        hier bekannten Buchungen. Er kann dann hinter dem echten Saldo zurückliegen.
+      enum: [live, cached]
+
+    Statement:
+      type: object
+      required: [accountId, ownerId, currency, balance, balanceSource, entries]
+      additionalProperties: false
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          description: Der sub-Claim des Inhabers, bei Version 2 also immer der Aufrufer
+          maxLength: 100
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        balance:
+          type: number
+          format: decimal
+        balanceSource:
+          $ref: '#/components/schemas/BalanceSource'
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatementEntry'
+
+    StatementEntry:
+      type: object
+      required: [id, kind, amount, currency, bookedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [Deposit, Withdrawal, TransferOut, TransferIn]
+        amount:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        description:
+          type: string
+          maxLength: 200
+        bookedAt:
+          type: string
+          format: date-time
+
+    HealthReport:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [Healthy, Degraded, Unhealthy]
+        entries:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              description:
+                type: string
+
+    ProblemDetails:
+      type: object
+      required: [status, title]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+        correlationId:
+          type: string

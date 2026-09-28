@@ -1,9 +1,13 @@
-# Lokale Entwicklung: alles aus dem Quellcode gebaut.
-# Das Deployment des Gesamtsystems liegt im Shared-Repo m321-main.
+# Lokale Entwicklung: alles aus dem Quellcode gebaut. Das Gesamtsystem mit den Diensten der
+# Bank liegt im Shared-Repo m321-main.
 #
-#   docker compose up --build -d    einmal alles
-#   docker compose up -d analyticsdb rabbitmq    nur Infrastruktur, Dienst mit dotnet run
+#   docker compose up --build -d                              Auswertungsdienst allein
+#   docker compose up -d --scale analytics-api=3              drei Instanzen teilen sich die Queue
+#   docker compose --profile observability up --build -d      dazu Loki, Alloy, Tempo, Prometheus, Grafana
+#   docker compose up -d analyticsdb rabbitmq                 nur Infrastruktur, Dienst mit dotnet run
 #
+# Das Profil observability liest die Konfiguration aus ../m321-main/observability; dafür muss
+# m321-main neben diesem Repo ausgecheckt sein.
 name: analytics
 
 services:
@@ -40,24 +44,110 @@ services:
       retries: 12
       start_period: 20s
 
+  # Kein container_name und ein Portbereich statt eines festen Ports: nur so lässt sich der
+  # Dienst mit --scale mehrfach starten. Jede Instanz bekommt einen Port aus dem Bereich.
   analytics-api:
     build:
       context: .
       dockerfile: src/Analytics.Api/Dockerfile
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_HTTP_PORTS: "8080"
-      ConnectionStrings__AnalyticsDb: "Host=analyticsdb;Port=5432;Database=analytics;Username=analytics;Password=analytics"
+      # ASPNETCORE_HTTP_PORTS setzt das Dockerfile: 8080 für die API, 8081 für /ready.
+      ConnectionStrings__AnalyticsDb: "Host=analyticsdb;Port=5432;Database=analytics;Username=analytics;Password=analytics;Maximum Pool Size=20;Timeout=3;Command Timeout=10"
       RabbitMq__Host: rabbitmq
       Auth__Issuer: "https://auth.fischerfocus.com/realms/personal"
       Auth__Audience: "m321-analytics-api"
+      # Metriken und Traces an Alloy. Läuft das Profil observability nicht, gehen sie ins Leere.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
     ports:
-      - "8082:8080"
+      - "8082-8084:8080"
+    # Länger als das Abfliessen (8 s) plus das Zu-Ende-Verarbeiten laufender Nachrichten.
+    stop_grace_period: 35s
     depends_on:
       analyticsdb:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
 
+  # --- Observability, gleiche Konfiguration wie bei der Bank ------------------------------
+
+  loki:
+    image: grafana/loki:3.7.8
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ../m321-main/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+
+  alloy:
+    image: grafana/alloy:v1.19.2
+    profiles: ["observability"]
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+    environment:
+      LOG_PROJECTS: "analytics"
+    ports:
+      - "12345:12345"
+    volumes:
+      - ../m321-main/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+      - prometheus
+      - tempo
+
+  tempo:
+    image: grafana/tempo:2.10.8
+    profiles: ["observability"]
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    ports:
+      - "3200:3200"
+    volumes:
+      - ../m321-main/observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    depends_on:
+      - prometheus
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-remote-write-receiver
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../m321-main/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../m321-main/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../m321-main/observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+
 volumes:
   analyticsdb-data:
+  loki-data:
+  alloy-data:
+  tempo-data:
+  prometheus-data:
+  grafana-data:

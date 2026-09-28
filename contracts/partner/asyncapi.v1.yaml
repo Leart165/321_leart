@@ -1,0 +1,141 @@
+asyncapi: 3.0.0
+
+info:
+  title: Bank Partner Events
+  version: 1.0.0
+  description: |
+    Was die Bank externen Partnern über den Broker gibt, heute der Analytics-Firma.
+
+    Getrennt von contracts/events/asyncapi.v1.yaml, weil es ein anderer Vertrag ist: die
+    internen Ereignisse gehören den Diensten der Bank und dürfen alles enthalten, was diese
+    brauchen. Ein Partner bekommt nur, was er für seine Aufgabe braucht. Die Buchung für
+    Partner enthält deshalb weder den Buchungstext, der Namen oder Zahlungszwecke enthalten kann,
+    noch Konto oder Überweisung; gerechnet wird je Kunde, nicht je Konto.
+
+    Veröffentlicht auf demselben Topic-Exchange bank.events, aber unter Routing Keys mit dem
+    Präfix partner. Ein Partner bekommt am Broker einen eigenen Benutzer, dessen
+    Topic-Berechtigung nur partner.* erlaubt. Die internen Ereignisse kann er damit nicht
+    abonnieren, auch nicht aus Versehen.
+
+    Zustellgarantie ist "mindestens einmal". Doppelte Nachrichten erkennt der Partner an
+    transactionId, die bei einer erneuten Zustellung gleich bleibt.
+
+  contact:
+    name: Tim Fischer
+    url: https://github.com/Tim-Fischer-zh/m321
+  license:
+    name: Nur für die Ausbildung, keine Weitergabe
+  tags:
+    - name: bank
+      description: Ereignisse der Bank-App
+    - name: partner
+      description: Für externe Partner der Bank
+    - name: m321
+      description: Modul M321, verteilte Systeme
+
+defaultContentType: application/json
+
+servers:
+  broker:
+    host: rabbitmq:5672
+    protocol: amqp
+    description: RabbitMQ im Compose-Netzwerk
+
+channels:
+  partnerTransactionCompleted:
+    address: partner.transaction.completed
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: bank.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: |
+      Eine Buchung ist erfolgt. Entsteht zu jeder internen Buchung genau einmal, in derselben
+      Transaktion wie die Buchung selbst. Eine Überweisung erzeugt zwei davon, eines je
+      beteiligtem Konto.
+    messages:
+      PartnerTransactionCompleted:
+        $ref: '#/components/messages/PartnerTransactionCompleted'
+
+operations:
+  publishPartnerTransactionCompleted:
+    action: send
+    channel:
+      $ref: '#/channels/partnerTransactionCompleted'
+    summary: Die Bank meldet Partnern eine erfolgte Buchung.
+    description: |
+      Geschrieben über die Outbox, in derselben Transaktion wie die Buchung. Geht deshalb nie
+      verloren, auch wenn der Broker gerade steht. Die Queue legt der Partner selbst an und
+      bindet sie an diesen Routing Key.
+
+components:
+  messageTraits:
+    commonHeaders:
+      headers:
+        type: object
+        required: [message-id, correlation-id, type, schema-version]
+        properties:
+          message-id:
+            type: string
+            format: uuid
+            description: Eindeutig je Nachricht.
+          correlation-id:
+            type: string
+            maxLength: 100
+            description: >-
+              Neu je Ereignis, nicht die Korrelations-Id der Bank. Der Partner kann seine
+              Verarbeitung damit in den eigenen Logs verfolgen, aber keine Ereignisse
+              untereinander oder mit Vorgängen der Bank verknüpfen. Aus demselben Grund
+              enthält der Kopf keinen traceparent; ein Trace des Partners beginnt bei ihm.
+          type:
+            type: string
+            description: Name des Ereignisses, hier PartnerTransactionCompleted.
+          schema-version:
+            type: integer
+            description: Version dieses Nachrichtenschemas.
+            enum: [1]
+
+  messages:
+    PartnerTransactionCompleted:
+      name: PartnerTransactionCompleted
+      title: Buchung erfolgt, für Partner
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/PartnerTransactionCompleted'
+
+  schemas:
+    PartnerTransactionCompleted:
+      type: object
+      required: [transactionId, ownerId, kind, amount, currency, bookedAt]
+      additionalProperties: false
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+          description: Fachliche Kennung der Buchung, dieselbe wie im internen Ereignis. Grundlage des Schutzes vor Doppelten.
+        ownerId:
+          type: string
+          maxLength: 100
+          description: Der Kunde, dem das Konto gehört. Gleich dem sub in seinem Token von Keycloak.
+        kind:
+          type: string
+          enum: [Deposit, Withdrawal, TransferOut, TransferIn]
+        amount:
+          type: number
+          format: decimal
+          description: >-
+            Exakter Dezimalbetrag mit hoechstens zwei Nachkommastellen. Ausdruecklich nicht
+            als Gleitkommazahl behandeln.
+          exclusiveMinimum: 0
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        bookedAt:
+          type: string
+          format: date-time

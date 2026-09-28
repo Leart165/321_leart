@@ -1,29 +1,80 @@
 name: Publish analytics-api
 
+# Bei jedem Push auf main: prüfen, testen, Image nach GHCR. Was hier rot ist, geht nicht ins Deployment.
+
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 
+env:
+  DOTNET_VERSION: "10.0.x"
+
 jobs:
   format:
+    name: Formatierung
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Format prüfen
         run: dotnet format Analytics.slnx --verify-no-changes
 
+  frontend:
+    name: Statistikseite (JavaScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Syntax prüfen
+        run: for file in $(find src/Analytics.Api/wwwroot/js -name '*.js'); do node --check "$file"; done
+
+      - name: Tests
+        run: node --test "tests/frontend/*.test.mjs"
+
+  contracts:
+    name: Kontrakte stimmen mit dem Shared-Repo überein
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # m321-main ist privat, der Standard-Token darf es nicht lesen. Deshalb entweder ein
+      # read-only Deploy Key (Secret SHARED_REPO_SSH_KEY) oder ein PAT (Secret SHARED_REPO_TOKEN).
+      - name: Shared-Repo holen
+        uses: actions/checkout@v4
+        with:
+          repository: Tim-Fischer-zh/m321-main
+          path: shared
+          ssh-key: ${{ secrets.SHARED_REPO_SSH_KEY }}
+          token: ${{ secrets.SHARED_REPO_TOKEN || github.token }}
+
+      - name: Kopie mit dem Original vergleichen
+        run: |
+          if ! diff -r --exclude=README.md shared/contracts contracts; then
+            echo ""
+            echo "Die Kontrakte im Shared-Repo und die Kopie hier stimmen nicht überein."
+            echo "Ändern immer im Shared-Repo, dann hier aktualisieren:"
+            echo "  cp -R ../m321-main/contracts/. contracts/"
+            exit 1
+          fi
+          echo "Kontrakte stimmen überein."
+
   test:
+    name: Tests
     runs-on: ubuntu-latest
 
     services:
+      # Die Integrationstests laufen gegen echtes Postgres: numeric(19,2), ON CONFLICT und die
+      # Transaktion der Deduplizierung prüft keine Ersatzdatenbank.
       postgres:
         image: postgres:18-alpine
         env:
@@ -38,21 +89,41 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # Die Broker-Tests prüfen die Rechte des Benutzers analytics an einem echten RabbitMQ, in
+      # einem eigenen virtuellen Host je Testklasse.
+      rabbitmq:
+        image: rabbitmq:4-management
+        ports:
+          - 5672:5672
+          - 15672:15672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 12
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Tests
-        run: dotnet test Analytics.slnx
+      - name: Wiederherstellen
+        run: dotnet restore Analytics.slnx
+
+      - name: Bauen
+        run: dotnet build Analytics.slnx --no-restore --configuration Release -warnaserror
+
+      - name: Testen
+        run: dotnet test Analytics.slnx --no-build --configuration Release --logger "console;verbosity=normal"
         env:
           ANALYTICS_TEST_CONNECTION: "Host=localhost;Port=5435;Database=postgres;Username=analytics;Password=analytics"
 
   build-and-push:
-    needs: [format, test]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: Image bauen und veröffentlichen
+    needs: [format, frontend, contracts, test]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
     permissions:
@@ -62,20 +133,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Runner sind amd64, die Macs im Team arm64: mit QEMU entstehen beide.
       - name: QEMU einrichten
         uses: docker/setup-qemu-action@v3
 
       - name: Buildx einrichten
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: An GHCR anmelden
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Bauen und pushen
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -85,3 +157,5 @@ jobs:
           tags: |
             ghcr.io/leart165/analytics-api:latest
             ghcr.io/leart165/analytics-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
