@@ -7,11 +7,11 @@ using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace Analytics.Api.OpenApi;
 
-// Eine Spezifikation je Version, weil jede Version ihr eigener Kontrakt ist: der Vertragstest
-// vergleicht /swagger/v1 mit openapi.v1.yaml. Eine spätere Version kommt als weiterer Eintrag dazu.
+// Eine Spezifikation je Version, weil jede Version ihr eigener Kontrakt ist: die Vertragstests
+// vergleichen /swagger/v1 mit openapi.v1.yaml und /swagger/v2 mit openapi.v2.yaml.
 public static class VersionedSwagger
 {
-    public static readonly string[] Versions = { "v1" };
+    public static readonly string[] Versions = { "v1", "v2" };
 
     // Name des Sicherheitsschemas, wie in den Kontrakten der Bank.
     public const string SecurityScheme = "keycloak";

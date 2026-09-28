@@ -15,6 +15,6 @@ public static class Scopes
     // Im Wortlaut von contracts/auth/scopes.md; erscheint in der Spezifikation.
     public static readonly IReadOnlyDictionary<string, string> Descriptions = new Dictionary<string, string>
     {
-        [AnalyticsRead] = "Eigene Summen bei der Analytics-Firma lesen"
+        [AnalyticsRead] = "Eigene Summen und Buchungen bei der Analytics-Firma lesen"
     };
 }

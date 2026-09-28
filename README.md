@@ -21,18 +21,18 @@ flowchart LR
 
     subgraph dienst["analytics-api ×2, Benutzer analytics"]
         consumer["Konsumenten<br/>Schema prüfen, Duplikate erkennen"]
-        api["GET /v1/analytics/me/monthly<br/>GET /v1/analytics/system/daily"]
+        api["GET /v1/analytics/me/monthly<br/>GET /v1/analytics/system/daily<br/>GET /v2/analytics/me/bookings"]
         web["Statistikseite<br/>analytics.localhost:8080"]
     end
 
-    db[("analyticsdb<br/>processed_transactions<br/>owner_monthly · system_daily")]
+    db[("analyticsdb<br/>processed_transactions · owner_bookings<br/>owner_monthly · system_daily")]
 
     ex -->|"partner.transaction.completed"| partner
     ex -.->|"transaction.completed, bis Contract"| ledger
     partner --> consumer
     ledger -.-> consumer
     partner -->|"kontraktwidrig"| dlx --> pdlq
-    consumer -->|"eine Transaktion:<br/>Dedup + Summen"| db
+    consumer -->|"eine Transaktion:<br/>Dedup + Protokoll + Summen"| db
     kunde -->|"Sign in with Bank, PKCE"| kc
     kunde --> web
     web -->|"Bearer, X-Correlation-Id"| api
@@ -48,7 +48,8 @@ flowchart LR
 | kein oder ungültiges Token | 401 |
 | Token ohne Scope `analytics:read` | 403 mit `WWW-Authenticate: Bearer error="insufficient_scope", scope="analytics:read"` |
 | `system/daily` ohne Rolle `bank-admin` | 403 |
-| fremde Summen | gibt es nicht: der Inhaber kommt aus `sub` im Token, nie aus der Anfrage |
+| fremde Summen oder Buchungen | gibt es nicht: der Inhaber kommt aus `sub` im Token, nie aus der Anfrage |
+| Buchungsprotokoll ohne Zeitraum | die letzten 30 Tage; `from` nach `to` oder mehr als 366 Tage ergibt 400 |
 
 ## Starten
 

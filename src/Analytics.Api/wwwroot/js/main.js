@@ -1,7 +1,9 @@
 import { AnalyticsApi } from "./api/analyticsApi.js";
 import { KeycloakLogin, LoginError } from "./auth/keycloak.js";
 import { Session, clearSession, loadSession, saveSession } from "./auth/session.js";
+import { monthRange } from "./domain/bookings.js";
 import { createBankDailyView } from "./views/bankDailyView.js";
+import { createBookingsView } from "./views/bookingsView.js";
 import { notice } from "./views/components.js";
 import { h, replace } from "./views/dom.js";
 import { createOverviewView } from "./views/overviewView.js";
@@ -102,21 +104,38 @@ function route() {
   if (!app.session) {
     return;
   }
-  const wanted = location.hash === "#/bank" && app.session.isAdmin ? "bank" : "overview";
+  const [path, query] = location.hash.slice(1).split("?");
+  const wanted = path === "/bank" && app.session.isAdmin ? "bank" : path === "/bookings" ? "bookings" : "overview";
   for (const button of tabs.querySelectorAll("[data-view]")) {
     button.setAttribute("aria-selected", String(button.dataset.view === wanted));
   }
 
-  const screen = wanted === "bank"
-    ? createBankDailyView({ api: app.api, onUnauthorized: expired })
-    : createOverviewView({ api: app.api, session: app.session, onUnauthorized: expired, onReconsent: reconsent });
+  const screen = createScreen(wanted, new URLSearchParams(query ?? ""));
   replace(view, screen.element);
   screen.load();
+}
+
+function createScreen(wanted, parameters) {
+  switch (wanted) {
+    case "bank":
+      return createBankDailyView({ api: app.api, onUnauthorized: expired });
+    case "bookings":
+      return createBookingsView({ api: app.api, range: rangeFrom(parameters), onUnauthorized: expired, onReconsent: reconsent });
+    default:
+      return createOverviewView({ api: app.api, session: app.session, onUnauthorized: expired, onReconsent: reconsent });
+  }
+}
+
+// #/bookings?month=2026-09 kommt aus der Monatstabelle der Übersicht.
+function rangeFrom(parameters) {
+  const month = parameters.get("month")?.match(/^(\d{4})-(\d{2})$/);
+  return month ? monthRange(Number(month[1]), Number(month[2])) : null;
 }
 
 function renderTabs() {
   replace(tabs,
     h("a", { href: "#/overview", role: "tab", dataset: { view: "overview" } }, "Meine Übersicht"),
+    h("a", { href: "#/bookings", role: "tab", dataset: { view: "bookings" } }, "Buchungen"),
     app.session.isAdmin ? h("a", { href: "#/bank", role: "tab", dataset: { view: "bank" } }, "Bank je Tag") : null);
 }
 
@@ -144,7 +163,7 @@ function showSignedOut(error) {
         h("h1", {}, "Auswertungen zu deinen Konten"),
         h("p", { class: "lead" },
           "Wir rechnen für deine Bank Statistiken zu deinen Buchungen. Melde dich mit dem Login deiner Bank an; " +
-          "ein eigenes Konto bei uns brauchst du nicht. Deine Bank fragt dich beim ersten Mal, ob du uns das Lesen deiner Summen erlaubst."),
+          "ein eigenes Konto bei uns brauchst du nicht. Deine Bank fragt dich beim ersten Mal, ob du uns das Lesen deiner Summen und Buchungen erlaubst."),
         error ? notice("error", error.message, error.hint) : null,
         h("button", {
           type: "button",

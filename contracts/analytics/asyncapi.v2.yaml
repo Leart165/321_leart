@@ -78,8 +78,10 @@ operations:
     summary: analytics-api verdichtet die Buchung, Queue analytics.partner.
     description: |
       Der Auswertungsdienst führt daraus seine Summen je Inhaber und Monat und je Tag für die
-      ganze Bank. Er speichert nie die einzelne Buchung. Dedupliziert wird über transactionId in
-      derselben Datenbanktransaktion wie die Summen, nicht über message-id.
+      ganze Bank und das Buchungsprotokoll des Inhabers (openapi.v2.yaml, /v2/analytics/me/bookings).
+      Im Protokoll steht nur, was dieses Ereignis enthält: Art, Betrag, Währung, Zeitpunkt und
+      transactionId. Dedupliziert wird über transactionId in derselben Datenbanktransaktion wie
+      Summen und Protokoll, nicht über message-id.
 
       Eine Nachricht, die nicht zum Schema passt, geht ohne Wiederholung in
       analytics.partner.dlq. Ist nur die eigene Datenbank kurz weg, geht sie zurück in die Queue

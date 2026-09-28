@@ -1,4 +1,4 @@
-// Zugriff auf die eigene API, Version 1. Jede Anfrage bekommt eine neue Korrelations-Id; mit ihr
+// Zugriff auf die eigene API: die Summen über Version 1, das Buchungsprotokoll über Version 2. Jede Anfrage bekommt eine neue Korrelations-Id; mit ihr
 // findet man in Grafana jede Logzeile dieser Anfrage.
 
 import { randomUuid } from "../auth/pkce.js";
@@ -20,6 +20,10 @@ export class AnalyticsApi {
 
   monthly(year) {
     return this.#get(`v1/analytics/me/monthly?year=${encodeURIComponent(year)}`);
+  }
+
+  bookings(from, to, limit) {
+    return this.#get(`v2/analytics/me/bookings?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${encodeURIComponent(limit)}`);
   }
 
   systemDaily(from, to) {

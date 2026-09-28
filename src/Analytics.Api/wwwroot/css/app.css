@@ -737,3 +737,38 @@ tbody tr:last-child td {
     font-size: 1.2rem;
   }
 }
+
+/* Buchungsprotokoll */
+.positive {
+  color: var(--positive);
+}
+
+.kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.kind::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--expenses);
+}
+
+.kind--in::before {
+  background: var(--income);
+}
+
+.txid {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+td time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

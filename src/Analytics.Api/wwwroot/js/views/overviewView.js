@@ -4,7 +4,7 @@ import { barChart, card, empty, kpi, loading, notice, select, table } from "./co
 import { h, replace } from "./dom.js";
 
 const SCOPE_TEXT = {
-  "analytics:read": "Deine Summen bei uns lesen",
+  "analytics:read": "Deine Summen und einzelnen Buchungen bei uns lesen",
   "statements:read": "Deine Kontoauszüge bei der Bank lesen"
 };
 
@@ -96,7 +96,14 @@ export function createOverviewView({ api, session, onUnauthorized, onReconsent }
             { label: "Einnahmen", numeric: true, render: (row) => money(row.income) },
             { label: "Ausgaben", numeric: true, render: (row) => money(row.expenses) },
             { label: "Netto", numeric: true, render: (row) => h("span", { class: row.net < 0 ? "negative" : null }, money(row.net)) },
-            { label: "Buchungen", numeric: true, render: (row) => formatCount(row.transactions) }
+            {
+              label: "Buchungen",
+              numeric: true,
+              render: (row) => row.transactions === 0
+                ? formatCount(row.transactions)
+                : h("a", { href: `#/bookings?month=${state.year}-${String(row.month).padStart(2, "0")}`, title: "Jede Buchung dieses Monats" },
+                  formatCount(row.transactions))
+            }
           ],
           months.map((month) => ({ ...month, muted: month.transactions === 0 })))));
   }

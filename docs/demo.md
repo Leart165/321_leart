@@ -23,6 +23,9 @@ dem README zeigen.
 - RabbitMQ, *Exchanges* → `bank.events` → *Bindings*: die Bank publiziert einmal, mehrere Queues
   hängen daran, darunter meine `analytics.partner`. Die Bank weiss nicht, wer zuhört.
 - Statistikseite neu laden: die Summe ist da.
+- Reiter "Buchungen": die Einzahlung steht als eigene Zeile oben im Protokoll, sekundengenau,
+  mit Art, Betrag und den ersten Zeichen der `transactionId`. In der Übersicht führt die Zahl
+  in der Spalte "Buchungen" eines Monats direkt zu den Buchungen dieses Monats.
 - Grafana, "Empfangene Nachrichten je Ergebnis": `analytics.partner`, `processed`.
 
 ## 3. Eigener Ausfall und Nachholen (1.5 min)

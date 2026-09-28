@@ -25,6 +25,11 @@ public sealed class AnalyticsDbContext : DbContext
         get { return Set<SystemDaily>(); }
     }
 
+    public DbSet<OwnerBooking> OwnerBookings
+    {
+        get { return Set<OwnerBooking>(); }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

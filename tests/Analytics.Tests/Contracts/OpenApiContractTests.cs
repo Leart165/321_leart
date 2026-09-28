@@ -262,3 +262,11 @@ public sealed class OpenApiV1ContractTests : OpenApiContractTests
     {
     }
 }
+
+public sealed class OpenApiV2ContractTests : OpenApiContractTests
+{
+    public OpenApiV2ContractTests(PostgresFixture postgres)
+        : base("v2", postgres)
+    {
+    }
+}

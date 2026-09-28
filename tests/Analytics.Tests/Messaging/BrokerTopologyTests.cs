@@ -143,23 +143,29 @@ public sealed class BrokerTopologyTests : IClassFixture<BrokerFixture>, IClassFi
             Options.Create(PartnerOptions(LegacyQueueMode.Drain)),
             NullLogger<PartnerTransactionsConsumer>.Instance);
 
+        bool restored = false;
         await consumer.StartAsync(CancellationToken.None);
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(3));
 
+            // Die Management-API führt ihre Liste mit Verzögerung; deshalb warten statt einmal fragen.
+            int connections = 0;
+            for (int attempt = 0; attempt < 50 && connections == 0; attempt++)
+            {
+                connections = (await _broker.GetManagementAsync("api/vhosts/{vhost}/connections")).GetArrayLength();
+                if (connections == 0)
+                {
+                    await Task.Delay(200);
+                }
+            }
+
             int channels = await OpenChannelsAsync();
-            int connections = (await _broker.GetManagementAsync("api/vhosts/{vhost}/connections")).GetArrayLength();
             Assert.True(channels <= 1, $"Nach wiederholten Fehlstarts sind {channels} Kanäle offen.");
             Assert.Equal(1, connections);
 
-            await using (IConnection admin = await _broker.ConnectAsAdminAsync())
-            await using (IChannel channel = await admin.CreateChannelAsync())
-            {
-                await channel.ExchangeDeclareAsync(MessagingTopology.Exchange, ExchangeType.Topic, durable: true, autoDelete: false);
-            }
-
-            await _broker.GrantTopicPermissionAsync();
+            await RestoreBankEventsAsync();
+            restored = true;
 
             int consumers = 0;
             for (int attempt = 0; attempt < 50 && consumers == 0; attempt++)
@@ -173,7 +179,24 @@ public sealed class BrokerTopologyTests : IClassFixture<BrokerFixture>, IClassFi
         finally
         {
             await consumer.StopAsync(CancellationToken.None);
+
+            // Die anderen Tests der Klasse teilen den vhost und brauchen bank.events.
+            if (!restored)
+            {
+                await RestoreBankEventsAsync();
+            }
         }
+    }
+
+    private async Task RestoreBankEventsAsync()
+    {
+        await using (IConnection admin = await _broker.ConnectAsAdminAsync())
+        await using (IChannel channel = await admin.CreateChannelAsync())
+        {
+            await channel.ExchangeDeclareAsync(MessagingTopology.Exchange, ExchangeType.Topic, durable: true, autoDelete: false);
+        }
+
+        await _broker.GrantTopicPermissionAsync();
     }
 
     private async Task<int> OpenChannelsAsync()

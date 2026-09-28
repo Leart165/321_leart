@@ -25,7 +25,7 @@ flowchart LR
 
     subgraph partner["Analytics-Firma (Leart), Netz partner"]
         api["<b>analytics-api</b> ×2<br/>.NET 10<br/>Konsument, API, Statistikseite"]
-        db[("<b>analyticsdb</b><br/>Postgres 18<br/>nur Summen")]
+        db[("<b>analyticsdb</b><br/>Postgres 18<br/>Summen und Protokoll")]
     end
 
     kunde -->|"Sign in with Bank<br/>Client analytics-web"| kc
@@ -93,15 +93,19 @@ sequenceDiagram
     O->>B: publiziert beide
     B->>L: analytics.partner (Prefetch 10), bis zum Contract auch analytics.ledger
     L->>L: Schema prüfen gegen partner/asyncapi.v1.yaml bzw. events/asyncapi.v1.yaml
-    L->>D: eine Transaktion: processed_transactions + owner_monthly + system_daily
+    L->>D: eine Transaktion: processed_transactions + owner_bookings + owner_monthly + system_daily
     L->>B: ack
 ```
 
-Gespeichert werden nie einzelne Buchungen, nur Summen: je Inhaber und Monat (`owner_monthly`)
-und für die ganze Bank je Tag (`system_daily`).
+Gespeichert werden Summen je Inhaber und Monat (`owner_monthly`), für die ganze Bank je Tag
+(`system_daily`) und seit Version 2 jede Buchung des Inhabers (`owner_bookings`), damit der
+Kunde unter „Buchungen“ jede einzelne sieht (`GET /v2/analytics/me/bookings`). Im Protokoll
+steht nur, was das Partner-Ereignis enthält: Art, Betrag, Währung, Zeitpunkt und
+`transactionId`; Buchungstext, Konto und Gegenpartei bekommt die Analytics-Firma nicht. Das
+Protokoll beginnt mit Version 2; ältere Buchungen kennt der Dienst nur als Summe.
 
 **Idempotenz.** RabbitMQ stellt mindestens einmal zu. `processed_transactions` hat die
-`transactionId` als Primärschlüssel; der Eintrag und beide Summen gehen in *einer*
+`transactionId` als Primärschlüssel; der Eintrag, das Protokoll und beide Summen gehen in *einer*
 Datenbanktransaktion hinaus (`INSERT ... ON CONFLICT DO NOTHING`, danach Upserts). Dieselbe
 Buchung zählt deshalb einmal, auch wenn sie über beide Queues kommt oder zwei Instanzen sie
 gleichzeitig bekommen: die Eindeutigkeit sichert die Datenbank, nicht der Speicher eines Prozesses.
