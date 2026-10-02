@@ -1,0 +1,88 @@
+asyncapi: 3.0.0
+
+info:
+  title: Analytics Events
+  version: 2.0.0
+  description: |
+    Version 2 der Ereignisbindung des Auswertungsdienstes: er konsumiert das schlanke
+    Partner-Ereignis partner.transaction.completed aus contracts/partner/asyncapi.v1.yaml statt
+    des internen transaction.completed. Kanal, Nachricht und Schema gehören der Bank und werden
+    hier nur referenziert.
+
+    Die Umstellung läuft als Expand and Contract, ohne Ausfall und ohne doppelt gezählte Buchung:
+
+    1. Expand: analytics-api liest beide Queues, die alte analytics.ledger nach Version 1 und die
+       neue analytics.partner nach dieser Version. Jede Buchung kommt zweimal an und zählt einmal,
+       weil transactionId in beiden Ereignissen dieselbe ist und die Deduplizierung in derselben
+       Datenbanktransaktion wie die Summen läuft.
+    2. Contract: analytics-api löst die Bindung von analytics.ledger an transaction.completed,
+       leert den Rest und löscht die alte Queue und ihre Dead-Letter-Queue, sobald beide leer
+       sind. Danach gilt nur noch diese Version, und die Bank erlaubt dem Broker-Benutzer
+       analytics nur noch partner.*.
+
+    Anders als in Version 1 hat die Queue einen eigenen Dead-Letter-Exchange analytics.dlx: der
+    Broker-Benutzer analytics darf nur auf analytics.* schreiben, nicht auf bank.dlx. bank.events
+    deklariert der Dienst nur passiv, er legt dort nichts an.
+
+    Das Partner-Ereignis trägt keinen traceparent und je Ereignis eine neue correlation-id. Die
+    Verarbeitung einer Nachricht beginnt deshalb einen eigenen Trace.
+  contact:
+    name: Leart Mena
+  license:
+    name: Nur für die Ausbildung, keine Weitergabe
+  tags:
+    - name: analytics
+      description: Auswertungen der Bank-App
+    - name: partner
+      description: Für externe Partner der Bank
+    - name: m321
+      description: Modul M321, verteilte Systeme
+
+servers:
+  broker:
+    host: rabbitmq:5672
+    protocol: amqp
+    description: RabbitMQ im Compose-Netzwerk, Benutzer analytics
+
+channels:
+  partnerTransactionCompleted:
+    address: partner.transaction.completed
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: bank.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: |
+      Eine Buchung ist erfolgt, für Partner. Derselbe Kanal wie in contracts/partner/asyncapi.v1.yaml,
+      hier nur für die eigene Konsumentenbindung wiederholt.
+    messages:
+      PartnerTransactionCompleted:
+        $ref: '../partner/asyncapi.v1.yaml#/components/messages/PartnerTransactionCompleted'
+
+operations:
+  consumePartnerTransactionCompleted:
+    x-queue:
+      name: analytics.partner
+      consumer: analytics-api
+      durable: true
+      prefetch: 10
+      deadLetterExchange: analytics.dlx
+      deadLetterQueue: analytics.partner.dlq
+    action: receive
+    channel:
+      $ref: '#/channels/partnerTransactionCompleted'
+    summary: analytics-api verdichtet die Buchung, Queue analytics.partner.
+    description: |
+      Der Auswertungsdienst führt daraus seine Summen je Inhaber und Monat und je Tag für die
+      ganze Bank und das Buchungsprotokoll des Inhabers (openapi.v2.yaml, /v2/analytics/me/bookings).
+      Im Protokoll steht nur, was dieses Ereignis enthält: Art, Betrag, Währung, Zeitpunkt und
+      transactionId. Dedupliziert wird über transactionId in derselben Datenbanktransaktion wie
+      Summen und Protokoll, nicht über message-id.
+
+      Eine Nachricht, die nicht zum Schema passt, geht ohne Wiederholung in
+      analytics.partner.dlq. Ist nur die eigene Datenbank kurz weg, geht sie zurück in die Queue
+      und nie in die Dead-Letter-Queue.

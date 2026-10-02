@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
@@ -6,6 +7,7 @@ namespace Analytics.Api.Controllers;
 [ApiController]
 [Route("health")]
 [Produces("application/json")]
+[AllowAnonymous]
 public sealed class HealthController : ControllerBase
 {
     private readonly HealthCheckService _health;

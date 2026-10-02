@@ -1,0 +1,198 @@
+openapi: 3.0.3
+
+info:
+  title: Statements API
+  version: 1.0.0
+  description: |
+    Auszugsdienst der Bank-App. Er hält eine eigene Datenbank und kennt Konten ausschliesslich
+    aus den Ereignissen account.opened und transaction.completed. Er greift nie auf die
+    Datenbank des Kontendienstes zu.
+
+    Den aktuellen Saldo holt er zur Laufzeit per HTTP beim Kontendienst. Antwortet dieser nicht,
+    liefert er die Summe seiner eigenen Einträge und markiert das im Feld balanceSource. Der
+    Auszug bleibt damit auch dann verfügbar, wenn der Kontendienst oder dessen Datenbank steht.
+  contact:
+    name: Tim Fischer
+
+servers:
+  - url: http://localhost:8080
+    description: Lokal über Traefik
+  - url: http://statements-api:8080
+    description: Innerhalb des Compose-Netzwerks
+
+tags:
+  - name: statements
+    description: Kontoauszug
+  - name: operations
+    description: Betrieb
+
+paths:
+  /v1/statements/{accountId}:
+    get:
+      tags: [statements]
+      operationId: getStatement
+      summary: Kontoauszug eines Kontos
+      description: |
+        Liefert die Buchungen aus der eigenen Datenbank und dazu den Saldo.
+        Der Saldo kommt vom Kontendienst, siehe balanceSource. Ein vorhandenes
+        Authorization-Token wird an den Kontendienst weitergereicht.
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          required: false
+          description: Nur Buchungen ab diesem Zeitpunkt
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Nur Buchungen bis zu diesem Zeitpunkt
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Der Auszug
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Statement'
+        '404':
+          description: Von diesem Konto ist hier nichts bekannt
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /health:
+    get:
+      tags: [operations]
+      operationId: health
+      summary: Bereitschaft des Dienstes
+      description: |
+        Prüft die eigene Datenbank und den Broker. Der Kontendienst gehört bewusst nicht
+        dazu: sein Ausfall macht diesen Dienst nicht unbereit, nur weniger genau.
+      responses:
+        '200':
+          description: Bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+        '503':
+          description: Nicht bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+
+components:
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 100
+
+  schemas:
+    BalanceSource:
+      type: string
+      description: |
+        live heisst, der Saldo kam frisch vom Kontendienst.
+        cached heisst, der Kontendienst war nicht erreichbar und der Wert ist die Summe der
+        hier bekannten Buchungen. Er kann dann hinter dem echten Saldo zurückliegen.
+      enum: [live, cached]
+
+    Statement:
+      type: object
+      required: [accountId, ownerId, currency, balance, balanceSource, entries]
+      additionalProperties: false
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          maxLength: 100
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        balance:
+          type: number
+          format: decimal
+        balanceSource:
+          $ref: '#/components/schemas/BalanceSource'
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatementEntry'
+
+    StatementEntry:
+      type: object
+      required: [id, kind, amount, currency, bookedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [Deposit, Withdrawal, TransferOut, TransferIn]
+        amount:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        description:
+          type: string
+          maxLength: 200
+        bookedAt:
+          type: string
+          format: date-time
+
+    HealthReport:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [Healthy, Degraded, Unhealthy]
+        entries:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              description:
+                type: string
+
+    ProblemDetails:
+      type: object
+      required: [status, title]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+        correlationId:
+          type: string

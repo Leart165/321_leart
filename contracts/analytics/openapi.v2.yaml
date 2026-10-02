@@ -1,0 +1,589 @@
+openapi: 3.0.3
+
+info:
+  title: Analytics API
+  version: 2.0.0
+  description: |
+    Version 2 des Auswertungsdienstes der Analytics-Firma. Expand: Version 1 läuft unverändert
+    weiter. Version 2 bietet dieselben Summen und zusätzlich das Buchungsprotokoll
+    /v2/analytics/me/bookings, in dem jede einzelne Buchung eines Kunden steht, und den
+    Monatsbericht als PDF unter /v2/analytics/me/reports.
+
+    Anders als Version 1 speichert der Dienst dafür jede Buchung, aber nur, was das
+    Partner-Ereignis der Bank enthält (contracts/partner/asyncapi.v1.yaml): Art, Betrag, Währung,
+    Zeitpunkt und transactionId. Buchungstext, Konto und Überweisung bekommt er nicht. Protokoll
+    und Summen entstehen in derselben Datenbanktransaktion; eine Buchung, die mehrfach ankommt,
+    steht einmal im Protokoll und zählt einmal in den Summen. Das Protokoll beginnt mit der
+    Einführung dieser Version; ältere Buchungen kennt der Dienst nur als Summe.
+
+    Anders als Version 1 beschreibt diese Version die Sicherheit als OAuth2-Schema keycloak mit
+    dem Scope analytics:read nach contracts/auth/scopes.md.
+  contact:
+    name: Leart Mena
+
+servers:
+  - url: http://localhost:8080
+    description: Lokal über Traefik
+  - url: http://analytics-api:8080
+    description: Innerhalb des Compose-Netzwerks
+
+security:
+  - keycloak: []
+
+tags:
+  - name: analytics
+    description: Summen und Buchungsprotokoll
+  - name: reports
+    description: Monatsberichte als PDF, beantragt und asynchron erzeugt
+  - name: operations
+    description: Betrieb
+
+paths:
+  /v2/analytics/me/bookings:
+    get:
+      tags: [analytics]
+      operationId: getMyBookings
+      summary: Eigenes Buchungsprotokoll
+      description: |
+        Jede einzelne Buchung des Inhabers aus dem sub-Claim des Tokens, deren Buchungsdatum im
+        Zeitraum liegt, neueste zuerst. Tage in UTC. Ohne from und to die letzten 30 Tage bis
+        heute; der Zeitraum umfasst höchstens 366 Tage. Höchstens limit Buchungen; wer mehr
+        braucht, fragt einen kürzeren Zeitraum an.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: Erster Tag, eingeschlossen. Ohne Angabe 29 Tage vor to
+          schema:
+            type: string
+            format: date
+            example: '2026-09-01'
+        - name: to
+          in: query
+          required: false
+          description: Letzter Tag, eingeschlossen. Ohne Angabe heute
+          schema:
+            type: string
+            format: date
+            example: '2026-09-30'
+        - name: limit
+          in: query
+          required: false
+          description: Höchstzahl der Buchungen in der Antwort
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 500
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Buchungen im Zeitraum, neueste zuerst, leer wenn es keine gibt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v2/analytics/me/reports:
+    post:
+      tags: [reports]
+      operationId: requestMyReport
+      summary: Monatsbericht als PDF beantragen
+      description: |
+        Beantragt den Monatsbericht eines Monats für den Inhaber aus dem sub-Claim. Der Dienst
+        antwortet sofort mit 202; erzeugt wird das PDF danach über den eigenen Exchange
+        analytics.events und die Queue analytics.reports (contracts/analytics/events.asyncapi.v1.yaml).
+        Den Fortschritt zeigt GET auf die Adresse im Kopf Location. Jeder Antrag ergibt einen
+        neuen Bericht mit dem Stand zum Zeitpunkt der Erzeugung. Ein Monat in der Zukunft ergibt 400.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportRequest'
+      responses:
+        '202':
+          description: Angenommen, das PDF wird erzeugt
+          headers:
+            Location:
+              description: Adresse des Berichts, dort steht der Status
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags: [reports]
+      operationId: listMyReports
+      summary: Eigene Monatsberichte
+      description: Die letzten 20 Berichte des Inhabers, neueste zuerst.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Berichte, neueste zuerst, leer wenn es keine gibt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Report'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v2/analytics/me/reports/{reportId}:
+    get:
+      tags: [reports]
+      operationId: getMyReport
+      summary: Status eines eigenen Monatsberichts
+      description: requested, solange das PDF erzeugt wird, danach ready oder failed.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Der Bericht
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v2/analytics/me/reports/{reportId}/document:
+    get:
+      tags: [reports]
+      operationId: getMyReportDocument
+      summary: PDF eines eigenen Monatsberichts
+      description: |
+        Das PDF, sobald der Bericht ready ist: jede Buchung des Monats in zeitlicher Reihenfolge
+        und die Summen je Währung, Zeiten in UTC. Vorher oder bei failed 409.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Das PDF, mit Content-Disposition attachment und dem Namen buchungen-JJJJ-MM.pdf
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Der Bericht ist noch nicht fertig oder gescheitert
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /v2/analytics/me/monthly:
+    get:
+      tags: [analytics]
+      operationId: getMyMonthly
+      summary: Eigene Monatssummen
+      description: |
+        Wie /v1/analytics/me/monthly: die Summen je Monat und Währung des angefragten Jahres für
+        den Inhaber aus dem sub-Claim. Ein Monat ohne Buchung erscheint nicht in der Liste.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/Year'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Monatssummen des angefragten Jahres, leer wenn es keine Buchungen gibt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MonthlyTotal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v2/analytics/system/daily:
+    get:
+      tags: [analytics]
+      operationId: getSystemDaily
+      summary: Tagessummen der gesamten Bank
+      description: |
+        Wie /v1/analytics/system/daily: die Tagessummen aller Inhaber im Zeitraum, beide Grenzen
+        eingeschlossen. Verlangt zusätzlich zum Scope die Realm-Rolle bank-admin.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Tagessummen des angefragten Zeitraums, leer wenn es keine Buchungen gibt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DailyTotal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /health:
+    get:
+      tags: [operations]
+      operationId: health
+      summary: Bereitschaft des Dienstes
+      description: |
+        Ohne Token erreichbar. Prüft die eigene Datenbank; der Broker gehört nicht dazu.
+      security: []
+      responses:
+        '200':
+          description: Bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+        '503':
+          description: Nicht bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+
+components:
+  securitySchemes:
+    keycloak:
+      type: oauth2
+      description: |
+        Access Token des Keycloak der Bank, Aufbau und Prüfung nach contracts/auth/jwt.md mit
+        aud m321-analytics-api. Welcher Scope wofür nötig ist, steht an jeder Operation und in
+        contracts/auth/scopes.md. Ein Token ohne den Scope einer Operation bekommt 403.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.fischerfocus.com/realms/personal/protocol/openid-connect/auth
+          tokenUrl: https://auth.fischerfocus.com/realms/personal/protocol/openid-connect/token
+          scopes:
+            analytics:read: Eigene Summen und Buchungen bei der Analytics-Firma lesen
+
+  parameters:
+    Year:
+      name: year
+      in: query
+      required: true
+      description: Kalenderjahr, für das die Monatssummen geliefert werden
+      schema:
+        type: integer
+        minimum: 2000
+        maximum: 2100
+        example: 2026
+
+    From:
+      name: from
+      in: query
+      required: true
+      description: Erster Tag des Zeitraums, eingeschlossen
+      schema:
+        type: string
+        format: date
+        example: '2026-09-01'
+
+    To:
+      name: to
+      in: query
+      required: true
+      description: Letzter Tag des Zeitraums, eingeschlossen. Darf nicht vor from liegen
+      schema:
+        type: string
+        format: date
+        example: '2026-09-30'
+
+    ReportId:
+      name: reportId
+      in: path
+      required: true
+      description: Id des Berichts aus der Antwort auf den Antrag
+      schema:
+        type: string
+        format: uuid
+
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: Zieht sich durch alle Aufrufe. Fehlt der Kopf, erzeugt der Dienst einen Wert.
+      schema:
+        type: string
+        maxLength: 100
+
+  schemas:
+    Currency:
+      type: string
+      description: Währung nach ISO 4217, Grossbuchstaben
+      pattern: '^[A-Z]{3}$'
+      example: CHF
+
+    Booking:
+      type: object
+      description: |
+        Eine Buchung im Protokoll. Deposit und TransferIn erhöhen den Saldo, Withdrawal und
+        TransferOut vermindern ihn; amount ist immer positiv.
+      required: [transactionId, kind, amount, currency, bookedAt]
+      additionalProperties: false
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [Deposit, Withdrawal, TransferOut, TransferIn]
+        amount:
+          type: number
+          format: decimal
+          exclusiveMinimum: true
+          minimum: 0
+          example: 120.50
+        currency:
+          $ref: '#/components/schemas/Currency'
+        bookedAt:
+          type: string
+          format: date-time
+
+    ReportRequest:
+      type: object
+      required: [year, month]
+      additionalProperties: false
+      properties:
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+          example: 2026
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+          example: 9
+
+    Report:
+      type: object
+      description: |
+        Ein beantragter Monatsbericht. status ist requested, solange das PDF erzeugt wird,
+        danach ready mit bookingCount oder failed mit failure. Ein abgeschlossener Bericht
+        ändert sich nie wieder.
+      required: [reportId, year, month, status, requestedAt]
+      additionalProperties: false
+      properties:
+        reportId:
+          type: string
+          format: uuid
+        year:
+          type: integer
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        status:
+          type: string
+          enum: [requested, ready, failed]
+        bookingCount:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: Anzahl Buchungen im PDF, nur bei ready
+        failure:
+          type: string
+          nullable: true
+          description: Grund, nur bei failed
+        requestedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    MonthlyTotal:
+      type: object
+      description: |
+        Summe eines Monats in einer Währung. Income sind Einzahlungen und eingehende
+        Überweisungen, Expenses sind Auszahlungen und ausgehende Überweisungen, Net ist
+        Income minus Expenses. Transactions zählt alle Buchungen, die eingeflossen sind.
+      required: [year, month, currency, income, expenses, net, transactions]
+      additionalProperties: false
+      properties:
+        year:
+          type: integer
+          example: 2026
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+          example: 9
+        currency:
+          $ref: '#/components/schemas/Currency'
+        income:
+          type: number
+          format: decimal
+          minimum: 0
+        expenses:
+          type: number
+          format: decimal
+          minimum: 0
+        net:
+          type: number
+          format: decimal
+          description: income minus expenses, kann negativ sein
+        transactions:
+          type: integer
+          minimum: 0
+
+    DailyTotal:
+      type: object
+      description: |
+        Summe eines Tages über alle Inhaber in einer Währung. Volume ist die Summe aus
+        Einzahlungen, Auszahlungen und ausgehenden Überweisungen; Transfers zählt eine
+        Überweisung nur bei der ausgehenden Seite.
+      required: [day, currency, volume, deposits, withdrawals, transfers]
+      additionalProperties: false
+      properties:
+        day:
+          type: string
+          format: date
+        currency:
+          $ref: '#/components/schemas/Currency'
+        volume:
+          type: number
+          format: decimal
+          minimum: 0
+        deposits:
+          type: integer
+          minimum: 0
+        withdrawals:
+          type: integer
+          minimum: 0
+        transfers:
+          type: integer
+          minimum: 0
+
+    HealthReport:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [Healthy, Degraded, Unhealthy]
+        entries:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              description:
+                type: string
+
+    ProblemDetails:
+      type: object
+      description: Fehlerbeschreibung nach RFC 7807
+      required: [status, title]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+        correlationId:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Die Eingabe ist ungültig, etwa from nach to, ein zu langer Zeitraum oder ein Jahr ausserhalb des erlaubten Bereichs
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    NotFound:
+      description: Den Bericht gibt es nicht, oder er gehört einem anderen Inhaber
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    Unauthorized:
+      description: |
+        Kein Token, oder das Token ist ungültig: falscher Aussteller, falsche Audience,
+        abgelaufen, falscher Algorithmus, kein Access Token, oder sub oder iat fehlen. Die
+        Antwort hat keinen Körper.
+      headers:
+        WWW-Authenticate:
+          description: Nennt das Schema Bearer und, falls bekannt, den Grund
+          schema:
+            type: string
+
+    Forbidden:
+      description: |
+        Das Token ist gültig, trägt aber den Scope analytics:read nicht: der Kunde hat der
+        Analytics-Firma diesen Zugriff nicht erlaubt. Bei system/daily auch, wenn dem Benutzer die
+        Rolle bank-admin fehlt. Die Antwort hat keinen Körper.
+      headers:
+        WWW-Authenticate:
+          description: |
+            Fehlt der Scope, nennt er nach RFC 6750 error="insufficient_scope" und den fehlenden
+            Scope. Fehlt nur die Rolle, steht er nicht in der Antwort.
+          schema:
+            type: string

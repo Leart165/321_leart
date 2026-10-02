@@ -42,20 +42,10 @@ public sealed record TransactionCompletedPayload
             throw new InvalidLedgerEventException("Das Feld bookedAt fehlt.");
         }
 
-        TransactionKind kind = Kind switch
-        {
-            "Deposit" => TransactionKind.Deposit,
-            "Withdrawal" => TransactionKind.Withdrawal,
-            "TransferOut" => TransactionKind.TransferOut,
-            "TransferIn" => TransactionKind.TransferIn,
-            null or "" => throw new InvalidLedgerEventException("Das Feld kind fehlt."),
-            _ => throw new InvalidLedgerEventException($"Die Buchungsart '{Kind}' ist unbekannt.")
-        };
-
         return BookedTransaction.Of(
             TransactionId.Value,
             OwnerId ?? string.Empty,
-            kind,
+            TransactionKinds.Parse(Kind),
             Amount.Value,
             DomainCurrency.Of(Currency ?? string.Empty),
             BookedAt.Value);

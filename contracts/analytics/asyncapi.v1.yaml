@@ -1,0 +1,66 @@
+asyncapi: 3.0.0
+
+info:
+  title: Analytics Events
+  version: 1.0.0
+  description: |
+    Ereignisbindung des Auswertungsdienstes. Kanal, Nachricht und das Schema
+    TransactionCompleted sind in contracts/events/asyncapi.v1.yaml definiert und werden hier
+    nur referenziert, nicht verändert; jener Kontrakt ist bereits veröffentlicht und
+    unveränderlich. Diese Datei beschreibt ausschliesslich, wie analytics-api dieses Ereignis
+    konsumiert: über eine eigene Queue mit eigener Dead-Letter-Queue, im selben Muster wie
+    statements.ledger.
+  contact:
+    name: Leart Mena
+  license:
+    name: Nur für die Ausbildung, keine Weitergabe
+  tags:
+    - name: analytics
+      description: Auswertungen der Bank-App
+    - name: m321
+      description: Modul M321, verteilte Systeme
+
+servers:
+  broker:
+    host: rabbitmq:5672
+    protocol: amqp
+    description: RabbitMQ im Compose-Netzwerk
+
+channels:
+  transactionCompleted:
+    address: transaction.completed
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: bank.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: |
+      Eine Buchung ist erfolgt. Derselbe Kanal wie in contracts/events/asyncapi.v1.yaml,
+      hier nur für die eigene Konsumentenbindung wiederholt.
+    messages:
+      TransactionCompleted:
+        $ref: '../events/asyncapi.v1.yaml#/components/messages/TransactionCompleted'
+
+operations:
+  consumeTransactionCompleted:
+    x-queue:
+      name: analytics.ledger
+      consumer: analytics-api
+      durable: true
+      prefetch: 10
+      deadLetterExchange: bank.dlx
+      deadLetterQueue: analytics.ledger.dlq
+    action: receive
+    channel:
+      $ref: '#/channels/transactionCompleted'
+    summary: analytics-api verdichtet die Buchung, Queue analytics.ledger.
+    description: |
+      Der Auswertungsdienst führt daraus seine eigenen Summen je Inhaber/Monat und je
+      Tag/Bank. Er speichert nie die einzelne Buchung. Dedupliziert wird über transactionId in
+      derselben Datenbanktransaktion wie die Summenaktualisierung, nicht über message-id:
+      transactionId ist die fachliche Kennung der Buchung und bleibt bei einer erneuten
+      Zustellung derselben Buchung gleich, auch falls message-id sich unterscheiden sollte.

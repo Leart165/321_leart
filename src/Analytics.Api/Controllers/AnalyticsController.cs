@@ -4,15 +4,15 @@ using Analytics.Application.Abstractions;
 using Analytics.Application.Ledger;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using System.ComponentModel.DataAnnotations;
-using System.Security.Claims;
 
 namespace Analytics.Api.Controllers;
 
 [ApiController]
 [Route("v1/analytics")]
 [Produces("application/json")]
-[Authorize]
+[Authorize(Policy = Scopes.AnalyticsRead)]
 public sealed class AnalyticsController : ControllerBase
 {
     private readonly IMonthlyTotalsReader _monthlyTotals;
@@ -28,13 +28,13 @@ public sealed class AnalyticsController : ControllerBase
     [ProducesResponseType<IReadOnlyList<MonthlyTotalDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<IReadOnlyList<MonthlyTotalDto>>> GetMyMonthlyAsync(
         [FromQuery][Range(2000, 2100)] int year,
         CancellationToken cancellationToken)
     {
-        string ownerId = User.FindFirstValue(JwtAuthentication.SubjectClaim)!;
-
-        IReadOnlyList<MonthlyTotal> totals = await _monthlyTotals.GetForOwnerAsync(ownerId, year, cancellationToken);
+        // Besitzregel: der Inhaber kommt aus dem Token, nie aus der Anfrage.
+        IReadOnlyList<MonthlyTotal> totals = await _monthlyTotals.GetForOwnerAsync(User.OwnerId(), year, cancellationToken);
         return Ok(totals.Select(MonthlyTotalDto.From).ToList());
     }
 
@@ -45,8 +45,8 @@ public sealed class AnalyticsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<IReadOnlyList<DailyTotalDto>>> GetSystemDailyAsync(
-        [FromQuery] DateOnly from,
-        [FromQuery] DateOnly to,
+        [FromQuery][BindRequired] DateOnly from,
+        [FromQuery][BindRequired] DateOnly to,
         CancellationToken cancellationToken)
     {
         if (from > to)

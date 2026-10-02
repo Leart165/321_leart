@@ -1,0 +1,564 @@
+openapi: 3.0.3
+
+info:
+  title: Accounts API
+  version: 1.0.0
+  description: |
+    Kontendienst der Bank-App. Führt Konten, bucht Ein- und Auszahlungen und nimmt
+    Überweisungsaufträge entgegen.
+
+    Eine Überweisung wird nicht sofort gebucht. Der Dienst prüft den Auftrag, nimmt ihn mit
+    202 an und gibt eine Auftrags-Id zurück. Die eigentliche Buchung führt ein Worker
+    asynchron aus. Der Fortschritt ist über GET /v1/transfers/{transferId} abrufbar.
+
+    Version 1 nimmt die ownerId aus dem Request. Version 2 wird sie aus dem sub-Claim des
+    JWT lesen. Solange beide Versionen laufen, bleibt v1 unverändert.
+  contact:
+    name: Tim Fischer
+
+servers:
+  - url: http://localhost:8080
+    description: Lokal über Traefik
+  - url: http://accounts-api:8080
+    description: Innerhalb des Compose-Netzwerks
+
+tags:
+  - name: accounts
+    description: Konten eröffnen, abfragen, bebuchen
+  - name: transfers
+    description: Überweisungen beauftragen und verfolgen
+  - name: operations
+    description: Betrieb
+  - name: development
+    description: |
+      Testwerkzeuge. Gibt es nur in der Entwicklungsumgebung; in jeder anderen antworten
+      diese Endpunkte mit 404, als gäbe es sie nicht. Kein Konsument darf sich darauf verlassen.
+
+paths:
+  /v1/accounts:
+    post:
+      tags: [accounts]
+      operationId: openAccount
+      summary: Konto eröffnen
+      description: |
+        Legt ein Konto mit Saldo null an und publiziert account.opened.
+        In Version 1 kommt die ownerId aus dem Request, ab Version 2 aus dem Token.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAccountRequest'
+      responses:
+        '201':
+          description: Konto eröffnet
+          headers:
+            Location:
+              description: Adresse des neuen Kontos
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+    get:
+      tags: [accounts]
+      operationId: listAccounts
+      summary: Konten eines Inhabers auflisten
+      description: |
+        Liefert alle Konten des Inhabers, sortiert nach Eröffnungszeitpunkt.
+        Eine leere Liste ist kein Fehler.
+      parameters:
+        - name: ownerId
+          in: query
+          required: true
+          description: Benutzer-Id aus dem Auth-Service. Ab v2 aus dem Token statt aus der Query.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Liste der Konten, leer wenn der Inhaber keine hat
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /v1/accounts/{accountId}:
+    get:
+      tags: [accounts]
+      operationId: getAccount
+      summary: Konto mit aktuellem Saldo
+      description: |
+        Liefert den verbindlichen Saldo. Der Auszugsdienst holt ihn hier,
+        wenn ein Kontoauszug abgerufen wird.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Das Konto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/accounts/{accountId}/deposits:
+    post:
+      tags: [accounts]
+      operationId: deposit
+      summary: Einzahlung buchen
+      description: |
+        Erhöht den Saldo und schreibt eine Buchung. Wird sofort ausgeführt,
+        nicht asynchron, weil keine zweite Partei beteiligt ist.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmountRequest'
+      responses:
+        '201':
+          description: Buchung erfolgt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /v1/accounts/{accountId}/balance:
+    put:
+      tags: [development]
+      operationId: setBalanceForTesting
+      summary: Saldo auf einen Zielwert bringen, nur zum Testen
+      description: |
+        Bucht die Differenz zwischen aktuellem und gewünschtem Saldo als Ein- oder Auszahlung
+        mit dem Verwendungszweck "Testausgleich". Der Saldo wird also nicht gesetzt, sondern
+        erbucht: Journal, Ereignisse und Auszug bleiben konsistent.
+
+        Nur in der Entwicklungsumgebung. Sonst 404.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetBalanceRequest'
+      responses:
+        '200':
+          description: Der Saldo steht auf dem Zielwert
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Konto nicht gefunden, oder der Endpunkt existiert in dieser Umgebung nicht
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /v1/accounts/{accountId}/withdrawals:
+    post:
+      tags: [accounts]
+      operationId: withdraw
+      summary: Abhebung buchen
+      description: |
+        Vermindert den Saldo und schreibt eine Buchung. Reicht das Guthaben nicht,
+        antwortet der Dienst mit 422 und ändert nichts.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmountRequest'
+      responses:
+        '201':
+          description: Buchung erfolgt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          description: Guthaben reicht nicht
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /v1/transfers:
+    post:
+      tags: [transfers]
+      operationId: requestTransfer
+      summary: Überweisung beauftragen
+      description: |
+        Prüft den Auftrag und nimmt ihn an. Die Prüfung auf Deckung ist vorläufig: verbindlich
+        entscheidet der Worker beim Buchen. Reicht das Guthaben dann nicht mehr, endet der
+        Auftrag im Status failed.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '202':
+          description: Auftrag angenommen, Buchung folgt asynchron
+          headers:
+            Location:
+              description: Adresse, unter der sich der Status abfragen lässt
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /v1/transfers/{transferId}:
+    get:
+      tags: [transfers]
+      operationId: getTransfer
+      summary: Status eines Überweisungsauftrags
+      description: |
+        Zeigt, ob der Auftrag noch aussteht, gebucht wurde oder gescheitert ist.
+        Solange kein Worker läuft, bleibt der Status accepted.
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Der Auftrag mit seinem aktuellen Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /health:
+    get:
+      tags: [operations]
+      operationId: health
+      summary: Bereitschaft des Dienstes
+      description: |
+        Prüft Datenbank und Broker. Ein fehlender Broker gilt als Degraded und nicht als
+        Unhealthy, weil Buchungen auch ohne ihn funktionieren.
+      responses:
+        '200':
+          description: Bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+        '503':
+          description: Nicht bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+
+components:
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: |
+        Zieht sich durch alle Aufrufe und Nachrichten. Fehlt der Kopf, erzeugt der Dienst
+        einen Wert und gibt ihn in der Antwort zurück.
+      schema:
+        type: string
+        maxLength: 100
+
+  schemas:
+    Currency:
+      type: string
+      description: Währung nach ISO 4217, Grossbuchstaben
+      pattern: '^[A-Z]{3}$'
+      example: CHF
+
+    Amount:
+      type: number
+      format: decimal
+      description: Betrag, positiv, höchstens zwei Nachkommastellen
+      exclusiveMinimum: true
+      minimum: 0
+      maximum: 1000000000
+      example: 100.50
+
+    OwnerId:
+      type: string
+      description: Benutzer-Id aus dem Auth-Service
+      minLength: 1
+      maxLength: 100
+      example: user-42
+
+    Description:
+      type: string
+      description: Verwendungszweck
+      maxLength: 200
+      example: Lohn September
+
+    OpenAccountRequest:
+      type: object
+      required: [ownerId, currency]
+      additionalProperties: false
+      properties:
+        ownerId:
+          $ref: '#/components/schemas/OwnerId'
+        currency:
+          $ref: '#/components/schemas/Currency'
+
+    AmountRequest:
+      type: object
+      required: [amount]
+      additionalProperties: false
+      properties:
+        amount:
+          $ref: '#/components/schemas/Amount'
+        description:
+          $ref: '#/components/schemas/Description'
+
+    SetBalanceRequest:
+      type: object
+      required: [balance]
+      additionalProperties: false
+      properties:
+        balance:
+          type: number
+          format: decimal
+          description: Zielsaldo, nicht negativ
+          minimum: 0
+          maximum: 1000000000
+
+    TransferRequest:
+      type: object
+      required: [sourceAccountId, targetAccountId, amount]
+      additionalProperties: false
+      properties:
+        sourceAccountId:
+          type: string
+          format: uuid
+        targetAccountId:
+          type: string
+          format: uuid
+        amount:
+          $ref: '#/components/schemas/Amount'
+        description:
+          $ref: '#/components/schemas/Description'
+
+    Account:
+      type: object
+      required: [id, ownerId, currency, balance, openedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ownerId:
+          $ref: '#/components/schemas/OwnerId'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        balance:
+          type: number
+          format: decimal
+          description: Aktueller Saldo, nie negativ
+          minimum: 0
+        openedAt:
+          type: string
+          format: date-time
+
+    TransactionKind:
+      type: string
+      description: Art der Buchung
+      enum: [Deposit, Withdrawal, TransferOut, TransferIn]
+
+    Transaction:
+      type: object
+      required: [id, accountId, kind, amount, currency, bookedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        accountId:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/TransactionKind'
+        amount:
+          $ref: '#/components/schemas/Amount'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        description:
+          $ref: '#/components/schemas/Description'
+        bookedAt:
+          type: string
+          format: date-time
+
+    TransferStatus:
+      type: string
+      description: |
+        accepted heisst angenommen und noch nicht gebucht, completed heisst gebucht,
+        failed heisst endgültig abgelehnt, der Grund steht in failure.
+      enum: [accepted, completed, failed]
+
+    Transfer:
+      type: object
+      required: [id, sourceAccountId, targetAccountId, amount, currency, status, requestedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceAccountId:
+          type: string
+          format: uuid
+        targetAccountId:
+          type: string
+          format: uuid
+        amount:
+          $ref: '#/components/schemas/Amount'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        description:
+          $ref: '#/components/schemas/Description'
+        status:
+          $ref: '#/components/schemas/TransferStatus'
+        failure:
+          type: string
+          nullable: true
+          description: Grund, nur bei status failed gesetzt
+          maxLength: 200
+        requestedAt:
+          type: string
+          format: date-time
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    HealthReport:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [Healthy, Degraded, Unhealthy]
+        entries:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              description:
+                type: string
+
+    ProblemDetails:
+      type: object
+      description: Fehlerbeschreibung nach RFC 7807
+      required: [status, title]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+        correlationId:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Die Eingabe ist ungültig
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    NotFound:
+      description: Das Konto oder der Auftrag existiert nicht
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    Conflict:
+      description: Zwei Anfragen ändern dasselbe Konto gleichzeitig, erneut versuchen
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    UnprocessableEntity:
+      description: Fachlich nicht ausführbar, etwa zu wenig Guthaben oder falsche Währung
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

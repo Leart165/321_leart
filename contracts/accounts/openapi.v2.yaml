@@ -1,0 +1,644 @@
+openapi: 3.0.3
+
+info:
+  title: Accounts API
+  version: 2.1.0
+  description: |
+    Kontendienst der Bank-App, Version 2. Fachlich dieselben Vorgänge wie Version 1:
+    Konten führen, Ein- und Auszahlungen buchen, Überweisungsaufträge entgegennehmen.
+
+    Der Unterschied ist die Herkunft des Inhabers. Version 1 nimmt die ownerId aus dem
+    Request, Version 2 ausschliesslich aus dem sub-Claim des Tokens. Jeder Endpunkt ausser
+    /health verlangt deshalb ein gültiges Bearer-Token nach contracts/auth/jwt.md, und zwar
+    mit dem Scope, der an der Operation steht (contracts/auth/scopes.md). Fehlt er, antwortet
+    die API mit 403, bevor sie irgendeine Id ansieht.
+
+    Ein Aufrufer sieht und bebucht nur seine eigenen Konten. Ein fremdes Konto oder ein
+    fremder Auftrag wird genauso beantwortet wie ein unbekannter: mit 404. Ein 403 an dieser
+    Stelle würde verraten, dass es die Id gibt.
+
+    Eine Überweisung darf auf ein fremdes Konto gehen. Nur das Quellkonto muss dem Aufrufer
+    gehören.
+
+    Mitarbeiter der Bank mit der Rolle bank-admin sehen unter /v2/admin, was allen Kunden
+    gehört. Dort gilt die Besitzregel bewusst nicht, dafür braucht es Rolle und Scope zusammen.
+    Hinzugekommen in 2.1.0, rein additiv.
+
+    Version 1 läuft unverändert daneben, bis alle Konsumenten umgestellt sind.
+  contact:
+    name: Tim Fischer
+
+servers:
+  - url: http://localhost:8080
+    description: Lokal
+  - url: http://accounts-api:8080
+    description: Innerhalb des Compose-Netzwerks
+
+security:
+  - keycloak: []
+
+tags:
+  - name: accounts
+    description: Eigene Konten eröffnen, abfragen, bebuchen
+  - name: transfers
+    description: Überweisungen beauftragen und verfolgen
+  - name: administration
+    description: Für Mitarbeiter der Bank mit der Rolle bank-admin
+  - name: operations
+    description: Betrieb
+
+paths:
+  /v2/accounts:
+    post:
+      tags: [accounts]
+      operationId: openAccount
+      security:
+        - keycloak: [accounts:write]
+      summary: Konto eröffnen
+      description: |
+        Legt für den Inhaber aus dem Token ein Konto mit Saldo null an und publiziert
+        account.opened. Der Request enthält keine ownerId mehr.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenOwnAccountRequest'
+      responses:
+        '201':
+          description: Konto eröffnet
+          headers:
+            Location:
+              description: Adresse des neuen Kontos
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags: [accounts]
+      operationId: listAccounts
+      security:
+        - keycloak: [accounts:read]
+      summary: Eigene Konten auflisten
+      description: |
+        Liefert alle Konten des Inhabers aus dem Token, sortiert nach Eröffnungszeitpunkt.
+        Eine leere Liste ist kein Fehler.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Liste der eigenen Konten, leer wenn es keine gibt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v2/accounts/{accountId}:
+    get:
+      tags: [accounts]
+      operationId: getAccount
+      security:
+        - keycloak: [accounts:read]
+      summary: Eigenes Konto mit aktuellem Saldo
+      description: |
+        Liefert den verbindlichen Saldo. Gehört das Konto einem anderen Benutzer, lautet die
+        Antwort 404.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Das Konto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v2/accounts/{accountId}/deposits:
+    post:
+      tags: [accounts]
+      operationId: deposit
+      security:
+        - keycloak: [accounts:write]
+      summary: Einzahlung auf ein eigenes Konto buchen
+      description: |
+        Erhöht den Saldo und schreibt eine Buchung. Wird sofort ausgeführt, nicht asynchron,
+        weil keine zweite Partei beteiligt ist.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmountRequest'
+      responses:
+        '201':
+          description: Buchung erfolgt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /v2/accounts/{accountId}/withdrawals:
+    post:
+      tags: [accounts]
+      operationId: withdraw
+      security:
+        - keycloak: [accounts:write]
+      summary: Abhebung von einem eigenen Konto buchen
+      description: |
+        Vermindert den Saldo und schreibt eine Buchung. Reicht das Guthaben nicht, antwortet
+        der Dienst mit 422 und ändert nichts.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmountRequest'
+      responses:
+        '201':
+          description: Buchung erfolgt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /v2/transfers:
+    post:
+      tags: [transfers]
+      operationId: requestTransfer
+      security:
+        - keycloak: [transfers:write]
+      summary: Überweisung von einem eigenen Konto beauftragen
+      description: |
+        Das Quellkonto muss dem Aufrufer gehören, das Zielkonto nicht. Die Prüfung auf Deckung
+        ist vorläufig: verbindlich entscheidet der Worker beim Buchen. Reicht das Guthaben dann
+        nicht mehr, endet der Auftrag im Status failed.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '202':
+          description: Auftrag angenommen, Buchung folgt asynchron
+          headers:
+            Location:
+              description: Adresse, unter der sich der Status abfragen lässt
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /v2/transfers/{transferId}:
+    get:
+      tags: [transfers]
+      operationId: getTransfer
+      security:
+        - keycloak: [accounts:read]
+      summary: Status eines eigenen Überweisungsauftrags
+      description: |
+        Sichtbar ist ein Auftrag für den Inhaber des Quellkontos. Für alle anderen lautet die
+        Antwort 404. Solange kein Worker läuft, bleibt der Status accepted.
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Der Auftrag mit seinem aktuellen Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v2/admin/transfers/failed:
+    get:
+      tags: [administration]
+      operationId: listFailedTransfers
+      security:
+        - keycloak: [accounts:read]
+      summary: Gescheiterte Überweisungen aller Kunden
+      description: |
+        Nur für Mitarbeiter der Bank. Verlangt zwei Dinge zugleich: die Realm-Rolle bank-admin
+        im Claim realm_access des Tokens (was dieser Benutzer darf) und den Scope accounts:read
+        (was dieser Client darf). Fehlt die Rolle, antwortet die API mit 403 ohne
+        WWW-Authenticate; fehlt der Scope, mit 403 und insufficient_scope. Die Besitzregel gilt
+        hier nicht: die Antwort enthält Aufträge aller Kunden, neueste zuerst.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Höchstens so viele Aufträge
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 50
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Die gescheiterten Aufträge, jeder mit seinem Grund in failure
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transfer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /health:
+    get:
+      tags: [operations]
+      operationId: health
+      summary: Bereitschaft des Dienstes
+      description: |
+        Ohne Token erreichbar. Prüft die Datenbank.
+      security: []
+      responses:
+        '200':
+          description: Bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+        '503':
+          description: Nicht bereit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReport'
+
+components:
+  securitySchemes:
+    keycloak:
+      type: oauth2
+      description: |
+        Access Token des Keycloak, Aufbau und Prüfung nach contracts/auth/jwt.md. Welcher Scope
+        wofür nötig ist, steht an jeder Operation und in contracts/auth/scopes.md. Ein Token
+        ohne den Scope einer Operation bekommt 403.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.fischerfocus.com/realms/personal/protocol/openid-connect/auth
+          tokenUrl: https://auth.fischerfocus.com/realms/personal/protocol/openid-connect/token
+          scopes:
+            accounts:read: Eigene Konten, Salden und Aufträge lesen
+            accounts:write: Konto eröffnen, einzahlen, abheben
+            transfers:write: Überweisungen von eigenen Konten beauftragen
+        clientCredentials:
+          tokenUrl: https://auth.fischerfocus.com/realms/personal/protocol/openid-connect/token
+          scopes:
+            accounts:read: Eigene Konten, Salden und Aufträge lesen
+            accounts:write: Konto eröffnen, einzahlen, abheben
+            transfers:write: Überweisungen von eigenen Konten beauftragen
+
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: |
+        Zieht sich durch alle Aufrufe und Nachrichten. Fehlt der Kopf, erzeugt der Dienst
+        einen Wert und gibt ihn in der Antwort zurück.
+      schema:
+        type: string
+        maxLength: 100
+
+  schemas:
+    Currency:
+      type: string
+      description: Währung nach ISO 4217, Grossbuchstaben
+      pattern: '^[A-Z]{3}$'
+      example: CHF
+
+    Amount:
+      type: number
+      format: decimal
+      description: Betrag, positiv, höchstens zwei Nachkommastellen
+      exclusiveMinimum: true
+      minimum: 0
+      maximum: 1000000000
+      example: 100.50
+
+    OwnerId:
+      type: string
+      description: Benutzer-Id, der sub-Claim aus dem Token
+      minLength: 1
+      maxLength: 100
+      example: 5f0c2a4e-8d7b-4c1a-9e3f-2b6d8a1c4e70
+
+    Description:
+      type: string
+      description: Verwendungszweck
+      maxLength: 200
+      example: Lohn September
+
+    OpenOwnAccountRequest:
+      type: object
+      required: [currency]
+      additionalProperties: false
+      properties:
+        currency:
+          $ref: '#/components/schemas/Currency'
+
+    AmountRequest:
+      type: object
+      required: [amount]
+      additionalProperties: false
+      properties:
+        amount:
+          $ref: '#/components/schemas/Amount'
+        description:
+          $ref: '#/components/schemas/Description'
+
+    TransferRequest:
+      type: object
+      required: [sourceAccountId, targetAccountId, amount]
+      additionalProperties: false
+      properties:
+        sourceAccountId:
+          type: string
+          format: uuid
+          description: Muss ein eigenes Konto sein
+        targetAccountId:
+          type: string
+          format: uuid
+          description: Darf ein fremdes Konto sein
+        amount:
+          $ref: '#/components/schemas/Amount'
+        description:
+          $ref: '#/components/schemas/Description'
+
+    Account:
+      type: object
+      required: [id, ownerId, currency, balance, openedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ownerId:
+          $ref: '#/components/schemas/OwnerId'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        balance:
+          type: number
+          format: decimal
+          description: Aktueller Saldo, nie negativ
+          minimum: 0
+        openedAt:
+          type: string
+          format: date-time
+
+    TransactionKind:
+      type: string
+      description: Art der Buchung
+      enum: [Deposit, Withdrawal, TransferOut, TransferIn]
+
+    Transaction:
+      type: object
+      required: [id, accountId, kind, amount, currency, bookedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        accountId:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/TransactionKind'
+        amount:
+          $ref: '#/components/schemas/Amount'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        description:
+          $ref: '#/components/schemas/Description'
+        bookedAt:
+          type: string
+          format: date-time
+
+    TransferStatus:
+      type: string
+      description: |
+        accepted heisst angenommen und noch nicht gebucht, completed heisst gebucht,
+        failed heisst endgültig abgelehnt, der Grund steht in failure.
+      enum: [accepted, completed, failed]
+
+    Transfer:
+      type: object
+      required: [id, sourceAccountId, targetAccountId, amount, currency, status, requestedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceAccountId:
+          type: string
+          format: uuid
+        targetAccountId:
+          type: string
+          format: uuid
+        amount:
+          $ref: '#/components/schemas/Amount'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        description:
+          $ref: '#/components/schemas/Description'
+        status:
+          $ref: '#/components/schemas/TransferStatus'
+        failure:
+          type: string
+          nullable: true
+          description: Grund, nur bei status failed gesetzt
+          maxLength: 200
+        requestedAt:
+          type: string
+          format: date-time
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    HealthReport:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [Healthy, Degraded, Unhealthy]
+        entries:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              description:
+                type: string
+
+    ProblemDetails:
+      type: object
+      description: Fehlerbeschreibung nach RFC 7807
+      required: [status, title]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+        correlationId:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Die Eingabe ist ungültig
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    Unauthorized:
+      description: |
+        Kein Token, oder das Token ist ungültig: falscher Aussteller, falsche Audience,
+        abgelaufen, falscher Algorithmus, kein Access Token, oder sub oder iat fehlen.
+        Die Antwort hat keinen Körper.
+      headers:
+        WWW-Authenticate:
+          description: Nennt das Schema Bearer und, falls bekannt, den Grund
+          schema:
+            type: string
+
+    Forbidden:
+      description: |
+        Das Token ist gültig, trägt aber den Scope dieser Operation nicht: der Kunde hat dem
+        Client diesen Zugriff nicht erlaubt. Unter /v2/admin auch, wenn dem Benutzer die Rolle
+        bank-admin fehlt. Die Antwort hat keinen Körper.
+      headers:
+        WWW-Authenticate:
+          description: |
+            Fehlt ein Scope, nennt er nach RFC 6750 error="insufficient_scope" und den
+            fehlenden Scope. Fehlt nur die Rolle, steht er nicht in der Antwort.
+          schema:
+            type: string
+
+    NotFound:
+      description: Das Konto oder der Auftrag existiert nicht oder gehört einem anderen Benutzer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    Conflict:
+      description: Zwei Anfragen ändern dasselbe Konto gleichzeitig, erneut versuchen
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    UnprocessableEntity:
+      description: Fachlich nicht ausführbar, etwa zu wenig Guthaben oder falsche Währung
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

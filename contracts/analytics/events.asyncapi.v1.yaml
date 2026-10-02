@@ -1,0 +1,157 @@
+asyncapi: 3.0.0
+
+info:
+  title: Analytics Events
+  version: 1.0.0
+  description: |
+    Was die Analytics-Firma selbst über den Broker publiziert. Gleich aufgebaut wie die Bank mit
+    bank.events: ein eigener Topic-Exchange analytics.events, geschrieben über eine Outbox in
+    derselben Datenbanktransaktion wie die Änderung, die das Ereignis meldet.
+
+    Heute nur ein Ereignis: report.requested. Ein Kunde beantragt über
+    POST /v2/analytics/me/reports (contracts/analytics/openapi.v2.yaml) einen Monatsbericht als
+    PDF. Die API antwortet sofort mit 202; erzeugt wird das PDF vom Konsumenten der Queue
+    analytics.reports. So nimmt die API weiter Anträge an, auch wenn das Erzeugen gerade hängt,
+    und beide Instanzen teilen sich die Arbeit.
+
+    Exchange und Queues gehören der Analytics-Firma. Der Broker-Benutzer analytics darf nach
+    rabbitmq/partner-access.sh alles mit dem Präfix analytics. anlegen, beschreiben und lesen;
+    die Bank braucht dafür nichts zu tun.
+
+    Zustellgarantie ist "mindestens einmal". Doppelte Nachrichten erkennt der Konsument daran,
+    dass der Bericht reportId schon erstellt ist.
+  contact:
+    name: Leart Mena
+    url: https://github.com/Leart165/321_leart
+  license:
+    name: Nur für die Ausbildung, keine Weitergabe
+  tags:
+    - name: analytics
+      description: Ereignisse der Analytics-Firma
+    - name: m321
+      description: Modul M321, verteilte Systeme
+
+defaultContentType: application/json
+
+servers:
+  broker:
+    host: rabbitmq:5672
+    protocol: amqp
+    description: RabbitMQ im Compose-Netzwerk
+
+channels:
+  reportRequested:
+    address: report.requested
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: analytics.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: Ein Kunde hat einen Monatsbericht als PDF beantragt.
+    messages:
+      ReportRequested:
+        $ref: '#/components/messages/ReportRequested'
+
+  reportsQueue:
+    address: analytics.reports
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: analytics.reports
+          durable: true
+          exclusive: false
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: |
+      Queue des Konsumenten in analytics-api, gebunden an report.requested. Dead-Letter-Exchange
+      analytics.dlx mit dem Namen der Queue als Routing Key, Dead-Letter-Queue
+      analytics.reports.dlq.
+    x-deadLetterExchange: analytics.dlx
+    x-deadLetterQueue: analytics.reports.dlq
+    messages:
+      ReportRequested:
+        $ref: '#/components/messages/ReportRequested'
+
+operations:
+  publishReportRequested:
+    action: send
+    channel:
+      $ref: '#/channels/reportRequested'
+    summary: analytics-api meldet einen beantragten Monatsbericht.
+    description: |
+      Geschrieben über die Outbox, in derselben Transaktion wie der Bericht im Zustand
+      requested. Geht deshalb nie verloren, auch wenn der Broker gerade steht.
+
+  receiveReportRequested:
+    action: receive
+    channel:
+      $ref: '#/channels/reportsQueue'
+    summary: analytics-api erzeugt das PDF.
+    description: |
+      Erzeugt das PDF aus dem Buchungsprotokoll des Inhabers und setzt den Bericht auf ready,
+      oder auf failed mit einem Grund, den eine Wiederholung nicht behebt. Ist der Bericht schon
+      erledigt, wird die Nachricht nur bestätigt. Passt sie nicht zum Schema oder gibt es den
+      Bericht nicht, geht sie ohne Wiederholung in analytics.reports.dlq. Ist nur die eigene
+      Datenbank kurz weg, geht sie zurück in die Queue.
+
+components:
+  messageTraits:
+    commonHeaders:
+      headers:
+        type: object
+        required: [message-id, correlation-id, type, schema-version]
+        properties:
+          message-id:
+            type: string
+            format: uuid
+            description: Eindeutig je Nachricht, die Id der Zeile in der Outbox.
+          correlation-id:
+            type: string
+            maxLength: 100
+            description: Die Korrelations-Id der Anfrage, mit der der Kunde den Bericht beantragt hat.
+          type:
+            type: string
+            description: Name des Ereignisses, hier ReportRequested.
+          schema-version:
+            type: integer
+            enum: [1]
+          traceparent:
+            type: string
+            description: W3C Trace Context. Der Trace reicht von der Anfrage des Kunden bis zum PDF.
+
+  messages:
+    ReportRequested:
+      name: ReportRequested
+      title: Monatsbericht beantragt
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/ReportRequested'
+
+  schemas:
+    ReportRequested:
+      type: object
+      required: [reportId, year, month, requestedAt]
+      additionalProperties: false
+      properties:
+        reportId:
+          type: string
+          format: uuid
+          description: Id des Berichts in analytics-api. Inhaber und Zustand stehen dort, nicht in der Nachricht.
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        requestedAt:
+          type: string
+          format: date-time

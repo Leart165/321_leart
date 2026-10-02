@@ -1,21 +1,26 @@
 # Kontrakte
 
-Der Analytics-Dienst gehört, wie alle Dienste der Bank-App, fachlich in `m321-main/contracts/`.
-Dieses Repo enthält hier nur den Entwurf: `m321-main` existiert noch nicht (weder unter
-`Leart165` noch unter `Tim-Fischer-zh` auffindbar), daher gibt es aktuell keinen Ort, an dem
-die Wahrheit liegen könnte.
+Die Wahrheit liegt im Shared-Repo `Tim-Fischer-zh/m321-main` unter `contracts/`. Dieser Ordner
+ist nur eine Kopie, damit Build, Tests und die eingebetteten Schemas ohne zweites Repository
+funktionieren. Die CI vergleicht ihn bei jedem Lauf mit dem Shared-Repo und bricht ab, wenn sie
+auseinanderlaufen.
 
-`analytics/openapi.v1.yaml` beschreibt die beiden HTTP-Endpunkte des Dienstes,
-`events/consumer.md` beschreibt die zusätzliche Konsumentenbindung an `transaction.completed`,
-die in `contracts/events/asyncapi.v1.yaml` des Shared-Repos ergänzt werden muss.
-
-Sobald `m321-main` existiert:
+Ändern immer zuerst in `m321-main`, dann hier aktualisieren:
 
 ```bash
-cp contracts/analytics/openapi.v1.yaml   ../m321-main/contracts/analytics/openapi.v1.yaml
-# und die Operation aus events/consumer.md manuell in
-# ../m321-main/contracts/events/asyncapi.v1.yaml ergänzen
+cp -R ../m321-main/contracts/. contracts/
 ```
 
-Danach richtet sich dieser Ordner, wie bei den anderen Diensten, nur noch nach der Kopie aus
-dem Shared-Repo.
+Was dieser Dienst davon benutzt:
+
+| Datei | Wofür |
+|---|---|
+| `analytics/openapi.v1.yaml` | eigene HTTP-API, Version 1 |
+| `analytics/openapi.v2.yaml` | eigene HTTP-API, Version 2 mit `/v2/analytics/me/overview` |
+| `analytics/asyncapi.v1.yaml` | eigene Queue `analytics.ledger` an `transaction.completed` |
+| `events/asyncapi.v1.yaml` | Schema von `TransactionCompleted`, zur Laufzeit gegen jede Nachricht geprüft |
+| `accounts/openapi.v2.yaml` | daraus wird beim Build der Client für den Kontendienst erzeugt |
+| `auth/jwt.md` | Aufbau der Keycloak-Token |
+
+Veröffentlichte `*.v1.yaml` sind unveränderlich. Wer etwas anderes braucht, legt `*.v2.yaml`
+daneben.

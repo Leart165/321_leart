@@ -37,6 +37,14 @@ public sealed class TotalsStore : ITotalsStore
             return false;
         }
 
+        // Im selben Datenbankvorgang wie Vermerk und Summen: das Protokoll zeigt genau die
+        // Buchungen, die auch gezählt sind, keine doppelt und keine fehlend.
+        await _context.Database.ExecuteSqlAsync(
+            $@"INSERT INTO owner_bookings (transaction_id, owner_id, kind, amount, currency, booked_at)
+               VALUES ({transaction.TransactionId}, {transaction.OwnerId}, {transaction.Kind.ToString()},
+                       {transaction.Amount}, {transaction.Currency.Code}, {transaction.BookedAt.ToUniversalTime()})",
+            cancellationToken);
+
         await _context.Database.ExecuteSqlAsync(
             $@"INSERT INTO owner_monthly (owner_id, year, month, currency, income, expenses, transactions)
                VALUES ({transaction.OwnerId}, {transaction.Year}, {transaction.Month}, {transaction.Currency.Code},

@@ -22,6 +22,159 @@ namespace Analytics.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Analytics.Domain.Reports.MonthlyReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int?>("BookingCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("booking_count");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<string>("Failure")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("failure");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("owner_id");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<int>("_month")
+                        .HasColumnType("integer")
+                        .HasColumnName("month");
+
+                    b.Property<int>("_year")
+                        .HasColumnType("integer")
+                        .HasColumnName("year");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId", "RequestedAt")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("ix_monthly_reports_owner_requested_at");
+
+                    b.ToTable("monthly_reports", (string)null);
+                });
+
+            modelBuilder.Entity("Analytics.Infrastructure.Outbox.OutboxMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.Property<DateTimeOffset?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("published_at");
+
+                    b.Property<string>("RoutingKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("routing_key");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<string>("TraceParent")
+                        .HasMaxLength(55)
+                        .HasColumnType("character varying(55)")
+                        .HasColumnName("trace_parent");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("type");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("ix_outbox_pending")
+                        .HasFilter("published_at IS NULL");
+
+                    b.ToTable("outbox", (string)null);
+                });
+
+            modelBuilder.Entity("Analytics.Infrastructure.Persistence.OwnerBooking", b =>
+                {
+                    b.Property<Guid>("TransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("transaction_id");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("numeric(19,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTimeOffset>("BookedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("booked_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("char(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("owner_id");
+
+                    b.HasKey("TransactionId");
+
+                    b.HasIndex("OwnerId", "BookedAt")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("ix_owner_bookings_owner_booked_at");
+
+                    b.ToTable("owner_bookings", (string)null);
+                });
+
             modelBuilder.Entity("Analytics.Infrastructure.Persistence.OwnerMonthly", b =>
                 {
                     b.Property<string>("OwnerId")
@@ -73,6 +226,22 @@ namespace Analytics.Infrastructure.Persistence.Migrations
                     b.ToTable("processed_transactions", (string)null);
                 });
 
+            modelBuilder.Entity("Analytics.Infrastructure.Persistence.ReportDocumentRecord", b =>
+                {
+                    b.Property<Guid>("ReportId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("report_id");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("content");
+
+                    b.HasKey("ReportId");
+
+                    b.ToTable("report_documents", (string)null);
+                });
+
             modelBuilder.Entity("Analytics.Infrastructure.Persistence.SystemDaily", b =>
                 {
                     b.Property<DateOnly>("Day")
@@ -102,6 +271,15 @@ namespace Analytics.Infrastructure.Persistence.Migrations
                     b.HasKey("Day", "Currency");
 
                     b.ToTable("system_daily", (string)null);
+                });
+
+            modelBuilder.Entity("Analytics.Infrastructure.Persistence.ReportDocumentRecord", b =>
+                {
+                    b.HasOne("Analytics.Domain.Reports.MonthlyReport", null)
+                        .WithOne()
+                        .HasForeignKey("Analytics.Infrastructure.Persistence.ReportDocumentRecord", "ReportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

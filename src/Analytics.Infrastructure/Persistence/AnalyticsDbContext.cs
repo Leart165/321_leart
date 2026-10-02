@@ -1,3 +1,5 @@
+using Analytics.Domain.Reports;
+using Analytics.Infrastructure.Outbox;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 
@@ -23,6 +25,26 @@ public sealed class AnalyticsDbContext : DbContext
     public DbSet<SystemDaily> SystemDaily
     {
         get { return Set<SystemDaily>(); }
+    }
+
+    public DbSet<OwnerBooking> OwnerBookings
+    {
+        get { return Set<OwnerBooking>(); }
+    }
+
+    public DbSet<MonthlyReport> MonthlyReports
+    {
+        get { return Set<MonthlyReport>(); }
+    }
+
+    public DbSet<ReportDocumentRecord> ReportDocuments
+    {
+        get { return Set<ReportDocumentRecord>(); }
+    }
+
+    public DbSet<OutboxMessage> Outbox
+    {
+        get { return Set<OutboxMessage>(); }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

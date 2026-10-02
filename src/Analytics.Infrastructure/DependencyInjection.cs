@@ -1,10 +1,14 @@
 using Analytics.Application.Abstractions;
 using Analytics.Application.Ledger;
+using Analytics.Application.Reports;
+using Analytics.Infrastructure.Outbox;
+using Analytics.Infrastructure.Reports;
 using Analytics.Infrastructure.Messaging;
 using Analytics.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Data;
 using System.Data.Common;
 
@@ -26,6 +30,14 @@ public static class DependencyInjection
         services.AddScoped<LedgerProjection>();
         services.AddScoped<IMonthlyTotalsReader, MonthlyTotalsReader>();
         services.AddScoped<IDailyTotalsReader, DailyTotalsReader>();
+        services.AddScoped<IBookingLogReader, BookingLogReader>();
+
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<IMonthlyReportRepository, MonthlyReportRepository>();
+        services.AddScoped<IReportEvents, OutboxReportEvents>();
+        services.AddSingleton<IStatementRenderer, PdfStatementRenderer>();
+        services.AddScoped<ReportService>();
 
         services.Configure<MessagingOptions>(configuration.GetSection(MessagingOptions.SectionName));
         services.AddSingleton<RabbitMqConnection>();
@@ -41,7 +53,21 @@ public static class DependencyInjection
 
     public static IServiceCollection AddLedgerConsumer(this IServiceCollection services)
     {
-        services.AddHostedService<TransactionCompletedConsumer>();
+        services.TryAddSingleton(AsyncApiSchemas.FromEmbeddedContracts());
+        services.AddScoped<TransactionCompletedHandler>();
+        services.AddHostedService<PartnerTransactionsConsumer>();
+        services.AddHostedService<LegacyLedgerConsumer>();
+        return services;
+    }
+
+    // Monatsberichte: die Outbox publiziert report.requested auf analytics.events, der Konsument
+    // der Queue analytics.reports erzeugt das PDF.
+    public static IServiceCollection AddReportProcessing(this IServiceCollection services)
+    {
+        services.TryAddSingleton(AsyncApiSchemas.FromEmbeddedContracts());
+        services.AddScoped<ReportRequestedHandler>();
+        services.AddHostedService<OutboxDispatcher>();
+        services.AddHostedService<ReportRequestedConsumer>();
         return services;
     }
 
