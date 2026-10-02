@@ -8,6 +8,7 @@ public sealed class AsyncApiSchemas
 {
     public const string EventsResourceName = "events.asyncapi.v1.yaml";
     public const string PartnerResourceName = "partner.asyncapi.v1.yaml";
+    public const string AnalyticsEventsResourceName = "analytics-events.asyncapi.v1.yaml";
 
     private readonly Dictionary<string, JsonSchema> _schemas;
 
@@ -16,12 +17,13 @@ public sealed class AsyncApiSchemas
         _schemas = schemas;
     }
 
-    // Beide Verträge der Bank, die dieser Dienst liest. Die Namen der Schemas überschneiden sich
-    // nicht: TransactionCompleted intern, PartnerTransactionCompleted für Partner.
+    // Die beiden Verträge der Bank, die dieser Dienst liest, und der eigene für analytics.events.
+    // Die Namen der Schemas überschneiden sich nicht: TransactionCompleted intern,
+    // PartnerTransactionCompleted für Partner, ReportRequested für den eigenen Antrag.
     public static AsyncApiSchemas FromEmbeddedContracts()
     {
         Dictionary<string, JsonSchema> schemas = new Dictionary<string, JsonSchema>(StringComparer.Ordinal);
-        foreach (string resource in new[] { EventsResourceName, PartnerResourceName })
+        foreach (string resource in new[] { EventsResourceName, PartnerResourceName, AnalyticsEventsResourceName })
         {
             using Stream stream = typeof(AsyncApiSchemas).Assembly.GetManifestResourceStream(resource)
                 ?? throw new InvalidOperationException($"Die eingebettete Ressource '{resource}' fehlt.");

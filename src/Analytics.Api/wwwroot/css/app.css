@@ -1,24 +1,26 @@
 :root {
-  --bg: #f4f6f5;
+  /* Bewusst ohne Farbe: nur Graustufen. Einnahmen und Ausgaben unterscheiden sich durch
+     Vorzeichen und Helligkeit, nicht durch Rot und Grün. */
+  --bg: #f4f4f4;
   --surface: #ffffff;
-  --surface-2: #eef2f1;
-  --text: #14201d;
-  --muted: #5b6b67;
-  --border: #d9e1df;
-  --accent: #0f766e;
-  --accent-strong: #0b5f58;
-  --accent-soft: #ccfbf1;
-  --income: #0f766e;
-  --expenses: #c2410c;
-  --volume: #4f46e5;
-  --positive: #0f766e;
-  --negative: #b42318;
-  --warning-bg: #fff7e6;
-  --warning-border: #f0c36d;
-  --error-bg: #fdecec;
-  --error-border: #f1a7a7;
+  --surface-2: #eeeeee;
+  --text: #161616;
+  --muted: #5e5e5e;
+  --border: #d8d8d8;
+  --accent: #1c1c1c;
+  --accent-strong: #000000;
+  --accent-soft: #e4e4e4;
+  --income: #2a2a2a;
+  --expenses: #a3a3a3;
+  --volume: #555555;
+  --positive: #161616;
+  --negative: #161616;
+  --warning-bg: #f2f2f2;
+  --warning-border: #b8b8b8;
+  --error-bg: #ebebeb;
+  --error-border: #8c8c8c;
   --radius: 14px;
-  --shadow: 0 1px 2px rgba(16, 24, 22, 0.06), 0 4px 16px rgba(16, 24, 22, 0.05);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.05);
   --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light;
@@ -26,24 +28,24 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d1413;
-    --surface: #141d1b;
-    --surface-2: #1b2624;
-    --text: #e6eeec;
-    --muted: #93a4a0;
-    --border: #283633;
-    --accent: #2dd4bf;
-    --accent-strong: #5eead4;
-    --accent-soft: #134e4a;
-    --income: #2dd4bf;
-    --expenses: #fb923c;
-    --volume: #818cf8;
-    --positive: #2dd4bf;
-    --negative: #f87171;
-    --warning-bg: #2b2210;
-    --warning-border: #8a6a1f;
-    --error-bg: #2d1414;
-    --error-border: #7f2d2d;
+    --bg: #111111;
+    --surface: #1a1a1a;
+    --surface-2: #232323;
+    --text: #ececec;
+    --muted: #a0a0a0;
+    --border: #333333;
+    --accent: #e6e6e6;
+    --accent-strong: #ffffff;
+    --accent-soft: #2e2e2e;
+    --income: #e0e0e0;
+    --expenses: #6f6f6f;
+    --volume: #b5b5b5;
+    --positive: #ececec;
+    --negative: #ececec;
+    --warning-bg: #202020;
+    --warning-border: #5a5a5a;
+    --error-bg: #262626;
+    --error-border: #7a7a7a;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
@@ -231,17 +233,11 @@ a {
 .button--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--surface);
 }
 
 .button--primary:hover {
   background: var(--accent-strong);
-}
-
-@media (prefers-color-scheme: dark) {
-  .button--primary {
-    color: #042f2e;
-  }
 }
 
 .button--ghost {
@@ -701,17 +697,20 @@ tbody tr:last-child td {
   background: var(--muted);
 }
 
+/* Ohne Farbe: gesund ist ein voller Punkt, eingeschränkt ein halber, nicht erreichbar ein leerer Ring. */
 .dot--healthy {
-  background: #16a34a;
+  background: var(--text);
 }
 
 .dot--degraded {
-  background: #d97706;
+  background: linear-gradient(90deg, var(--text) 50%, transparent 50%);
+  box-shadow: inset 0 0 0 1.5px var(--text);
 }
 
 .dot--unhealthy,
 .dot--unreachable {
-  background: #dc2626;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text);
 }
 
 @media (max-width: 640px) {
@@ -771,4 +770,24 @@ tbody tr:last-child td {
 td time {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Monatsbericht */
+.report-request {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.report-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.report-status--requested .spinner {
+  width: 12px;
+  height: 12px;
 }

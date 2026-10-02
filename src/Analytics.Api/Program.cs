@@ -17,6 +17,7 @@ builder.Services.AddServerTracing();
 builder.Services.AddAnalyticsCore(builder.Configuration);
 builder.Services.AddDatabaseMigration();
 builder.Services.AddLedgerConsumer();
+builder.Services.AddReportProcessing();
 
 builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddScopePolicies();

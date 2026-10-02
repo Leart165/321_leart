@@ -26,6 +26,24 @@ export class AnalyticsApi {
     return this.#get(`v2/analytics/me/bookings?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${encodeURIComponent(limit)}`);
   }
 
+  // Monatsbericht beantragen. Antwort 202: das PDF entsteht danach über analytics.events.
+  requestReport(year, month) {
+    return this.#send("POST", "v2/analytics/me/reports", { body: { year, month } });
+  }
+
+  reports() {
+    return this.#get("v2/analytics/me/reports");
+  }
+
+  report(reportId) {
+    return this.#get(`v2/analytics/me/reports/${encodeURIComponent(reportId)}`);
+  }
+
+  // Das PDF als Blob; herunterladen muss die Seite selbst, weil die Anfrage ein Token braucht.
+  reportDocument(reportId) {
+    return this.#send("GET", `v2/analytics/me/reports/${encodeURIComponent(reportId)}/document`, { accept: "application/pdf", blob: true });
+  }
+
   systemDaily(from, to) {
     return this.#get(`v1/analytics/system/daily?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
   }
@@ -39,19 +57,25 @@ export class AnalyticsApi {
     }
   }
 
-  async #get(path) {
+  #get(path) {
+    return this.#send("GET", path);
+  }
+
+  async #send(method, path, { body, accept = "application/json", blob = false } = {}) {
     const correlationId = randomUuid();
     const started = performance.now();
-    let response;
+    const headers = {
+      Accept: accept,
+      Authorization: `Bearer ${this.token()}`,
+      "X-Correlation-Id": correlationId
+    };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
 
+    let response;
     try {
-      response = await fetch(path, {
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${this.token()}`,
-          "X-Correlation-Id": correlationId
-        }
-      });
+      response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     } catch {
       this.onRequest({ path, correlationId, status: 0, ms: Math.round(performance.now() - started) });
       throw new ApiError(0, "Der Auswertungsdienst ist nicht erreichbar.", correlationId);
@@ -60,7 +84,7 @@ export class AnalyticsApi {
     this.onRequest({ path, correlationId, status: response.status, ms: Math.round(performance.now() - started) });
 
     if (response.ok) {
-      return response.json();
+      return blob ? response.blob() : response.json();
     }
 
     const problem = await response.json().catch(() => ({}));
@@ -81,6 +105,8 @@ export function missingScopeIn(challenge) {
 function messageFor(status, problem, missingScope) {
   switch (status) {
     case 400:
+    case 404:
+    case 409:
       return problem.detail ?? problem.title ?? "Die Eingabe ist ungültig.";
     case 401:
       return "Die Anmeldung ist abgelaufen oder das Token wird nicht akzeptiert.";

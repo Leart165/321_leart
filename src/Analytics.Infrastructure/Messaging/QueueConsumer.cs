@@ -10,7 +10,7 @@ namespace Analytics.Infrastructure.Messaging;
 
 // Was bei jeder Queue gleich ist: Verbindung, Wiederholen bei Broker-Ausfall, Ack oder Nack je
 // Ergebnis, Metrik, Trace und sauberes Herunterfahren. Die Unterklassen sagen nur, welche Queue,
-// welches Ereignis und was vor dem Konsumieren am Broker vorbereitet werden muss.
+// was vor dem Konsumieren am Broker vorbereitet werden muss und wer eine Nachricht verarbeitet.
 public abstract class QueueConsumer : BackgroundService
 {
     private const string CorrelationHeader = "correlation-id";
@@ -48,10 +48,11 @@ public abstract class QueueConsumer : BackgroundService
 
     protected abstract string Queue { get; }
 
-    protected abstract BookingFormat Format { get; }
-
     // Legt am Broker an oder prüft, was die Queue braucht. false heisst: nicht konsumieren.
     protected abstract Task<bool> PrepareAsync(IConnection connection, IChannel channel, CancellationToken cancellationToken);
+
+    // Verarbeitet eine Nachricht in einem eigenen Scope und liefert ein ConsumeOutcome.
+    protected abstract Task<string> HandleAsync(IServiceProvider services, BasicDeliverEventArgs delivery);
 
     // Läuft, solange konsumiert wird. Kehrt es zurück, ist diese Queue erledigt.
     protected virtual Task WhileConsumingAsync(IConnection connection, CancellationToken cancellationToken)
@@ -135,8 +136,8 @@ public abstract class QueueConsumer : BackgroundService
             cancellationToken: cancellationToken);
 
         Logger.LogInformation(
-            "[{Instance}] konsumiere Queue {Queue} ({Format}), Prefetch {Prefetch}.",
-            Instance, Queue, Format, Options.Prefetch);
+            "[{Instance}] konsumiere Queue {Queue}, Prefetch {Prefetch}.",
+            Instance, Queue, Options.Prefetch);
         return true;
     }
 
@@ -146,8 +147,8 @@ public abstract class QueueConsumer : BackgroundService
 
         string correlationId = ReadCorrelationId(delivery);
 
-        // Mit traceparent (nur noch transaction.completed) setzt die Spanne den Trace der Bank
-        // fort; ohne, wie beim Partner-Ereignis, beginnt hier ein eigener.
+        // Mit traceparent (transaction.completed, report.requested) setzt die Spanne den Trace des
+        // Absenders fort; ohne, wie beim Partner-Ereignis, beginnt hier ein eigener.
         using Activity? activity = MessagingTracing.StartProcess(
             Queue, delivery.RoutingKey, delivery.BasicProperties.MessageId, correlationId,
             delivery.BasicProperties.Headers);
@@ -162,9 +163,7 @@ public abstract class QueueConsumer : BackgroundService
         string outcome;
         using (IServiceScope scope = _scopes.CreateScope())
         {
-            TransactionCompletedHandler handler = scope.ServiceProvider.GetRequiredService<TransactionCompletedHandler>();
-            outcome = await handler.HandleAsync(
-                delivery.Body, Format, delivery.BasicProperties.Type, delivery.Redelivered, delivery.CancellationToken);
+            outcome = await HandleAsync(scope.ServiceProvider, delivery);
         }
 
         if (ConsumeOutcome.IsAcknowledged(outcome))

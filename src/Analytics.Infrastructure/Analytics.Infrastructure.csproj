@@ -25,6 +25,7 @@
     <!-- Im Assembly, damit der Dienst im Betrieb gegen genau das Schema prüft, gegen das er gebaut wurde. -->
     <EmbeddedResource Include="../../contracts/events/asyncapi.v1.yaml" LogicalName="events.asyncapi.v1.yaml" />
     <EmbeddedResource Include="../../contracts/partner/asyncapi.v1.yaml" LogicalName="partner.asyncapi.v1.yaml" />
+    <EmbeddedResource Include="../../contracts/analytics/events.asyncapi.v1.yaml" LogicalName="analytics-events.asyncapi.v1.yaml" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -35,6 +35,36 @@ public static class MessagingTracing
         return activity;
     }
 
+    // Spanne beim Publizieren aus der Outbox. Sie hängt am Trace, in dem das Ereignis entstand,
+    // nicht am Dispatcher.
+    public static Activity? StartPublish(string exchange, string routingKey, Guid messageId, string? traceParent)
+    {
+        ActivityContext parent = default;
+        if (traceParent is not null)
+        {
+            ActivityContext.TryParse(traceParent, null, isRemote: false, out parent);
+        }
+
+        Activity? activity = Source.StartActivity($"publish {exchange}", ActivityKind.Producer, parent);
+        activity?.SetTag("messaging.system", "rabbitmq");
+        activity?.SetTag("messaging.operation.name", "publish");
+        activity?.SetTag("messaging.operation.type", "send");
+        activity?.SetTag("messaging.destination.name", exchange);
+        activity?.SetTag("messaging.rabbitmq.destination.routing_key", routingKey);
+        activity?.SetTag("messaging.message.id", messageId.ToString());
+        return activity;
+    }
+
+    // Setzt traceparent in den Kopf, damit der Konsument den Trace fortsetzt.
+    public static void Inject(IDictionary<string, object?> headers, Activity? activity, string? fallback)
+    {
+        string? traceParent = activity?.Id ?? fallback;
+        if (traceParent is not null)
+        {
+            headers[TraceParentHeader] = traceParent;
+        }
+    }
+
     public static void Complete(Activity? activity, string outcome)
     {
         if (activity is null)

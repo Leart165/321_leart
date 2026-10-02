@@ -17,15 +17,20 @@ flowchart LR
         ledger["analytics.ledger<br/>transaction.completed<br/>alt, wird abgelöst"]
         dlx{{"analytics.dlx<br/>eigener Dead-Letter-Exchange"}}
         pdlq["analytics.partner.dlq"]
+        aev{{"analytics.events<br/>topic, eigener Exchange"}}
+        reports["analytics.reports<br/>report.requested"]
+        rdlq["analytics.reports.dlq"]
     end
 
     subgraph dienst["analytics-api ×2, Benutzer analytics"]
         consumer["Konsumenten<br/>Schema prüfen, Duplikate erkennen"]
-        api["GET /v1/analytics/me/monthly<br/>GET /v1/analytics/system/daily<br/>GET /v2/analytics/me/bookings"]
+        api["GET /v1/analytics/me/monthly<br/>GET /v1/analytics/system/daily<br/>GET /v2/analytics/me/bookings<br/>POST /v2/analytics/me/reports"]
+        outbox["Outbox-Dispatcher"]
+        pdf["Konsument Monatsbericht<br/>erzeugt das PDF"]
         web["Statistikseite<br/>analytics.localhost:8080"]
     end
 
-    db[("analyticsdb<br/>processed_transactions · owner_bookings<br/>owner_monthly · system_daily")]
+    db[("analyticsdb<br/>processed_transactions · owner_bookings<br/>owner_monthly · system_daily<br/>monthly_reports · outbox")]
 
     ex -->|"partner.transaction.completed"| partner
     ex -.->|"transaction.completed, bis Contract"| ledger
@@ -37,6 +42,10 @@ flowchart LR
     kunde --> web
     web -->|"Bearer, X-Correlation-Id"| api
     api --> db
+    api -->|"Antrag + Outbox,<br/>eine Transaktion, 202"| db
+    db --> outbox -->|"report.requested"| aev --> reports --> pdf
+    reports -->|"kontraktwidrig"| dlx --> rdlq
+    pdf -->|"PDF, Status ready"| db
 ```
 
 | Fall | Was passiert |
@@ -49,6 +58,9 @@ flowchart LR
 | Token ohne Scope `analytics:read` | 403 mit `WWW-Authenticate: Bearer error="insufficient_scope", scope="analytics:read"` |
 | `system/daily` ohne Rolle `bank-admin` | 403 |
 | fremde Summen oder Buchungen | gibt es nicht: der Inhaber kommt aus `sub` im Token, nie aus der Anfrage |
+| Monatsbericht beantragt | sofort **202**; das PDF entsteht über die Outbox, den eigenen Exchange `analytics.events` und die Queue `analytics.reports`, wie die Überweisung der Bank |
+| Broker weg, während ein Bericht beantragt wird | der Antrag liegt in der Outbox und geht hinaus, sobald der Broker zurück ist |
+| derselbe Antrag kommt doppelt, auch auf beiden Instanzen gleichzeitig | ein PDF: der zweite Konsument merkt an `xmin` von Postgres, dass der Bericht schon fertig ist |
 | Buchungsprotokoll ohne Zeitraum | die letzten 30 Tage; `from` nach `to` oder mehr als 366 Tage ergibt 400 |
 
 ## Starten

@@ -6,7 +6,8 @@ info:
   description: |
     Version 2 des Auswertungsdienstes der Analytics-Firma. Expand: Version 1 läuft unverändert
     weiter. Version 2 bietet dieselben Summen und zusätzlich das Buchungsprotokoll
-    /v2/analytics/me/bookings, in dem jede einzelne Buchung eines Kunden steht.
+    /v2/analytics/me/bookings, in dem jede einzelne Buchung eines Kunden steht, und den
+    Monatsbericht als PDF unter /v2/analytics/me/reports.
 
     Anders als Version 1 speichert der Dienst dafür jede Buchung, aber nur, was das
     Partner-Ereignis der Bank enthält (contracts/partner/asyncapi.v1.yaml): Art, Betrag, Währung,
@@ -32,6 +33,8 @@ security:
 tags:
   - name: analytics
     description: Summen und Buchungsprotokoll
+  - name: reports
+    description: Monatsberichte als PDF, beantragt und asynchron erzeugt
   - name: operations
     description: Betrieb
 
@@ -90,6 +93,128 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /v2/analytics/me/reports:
+    post:
+      tags: [reports]
+      operationId: requestMyReport
+      summary: Monatsbericht als PDF beantragen
+      description: |
+        Beantragt den Monatsbericht eines Monats für den Inhaber aus dem sub-Claim. Der Dienst
+        antwortet sofort mit 202; erzeugt wird das PDF danach über den eigenen Exchange
+        analytics.events und die Queue analytics.reports (contracts/analytics/events.asyncapi.v1.yaml).
+        Den Fortschritt zeigt GET auf die Adresse im Kopf Location. Jeder Antrag ergibt einen
+        neuen Bericht mit dem Stand zum Zeitpunkt der Erzeugung. Ein Monat in der Zukunft ergibt 400.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportRequest'
+      responses:
+        '202':
+          description: Angenommen, das PDF wird erzeugt
+          headers:
+            Location:
+              description: Adresse des Berichts, dort steht der Status
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags: [reports]
+      operationId: listMyReports
+      summary: Eigene Monatsberichte
+      description: Die letzten 20 Berichte des Inhabers, neueste zuerst.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Berichte, neueste zuerst, leer wenn es keine gibt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Report'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v2/analytics/me/reports/{reportId}:
+    get:
+      tags: [reports]
+      operationId: getMyReport
+      summary: Status eines eigenen Monatsberichts
+      description: requested, solange das PDF erzeugt wird, danach ready oder failed.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Der Bericht
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v2/analytics/me/reports/{reportId}/document:
+    get:
+      tags: [reports]
+      operationId: getMyReportDocument
+      summary: PDF eines eigenen Monatsberichts
+      description: |
+        Das PDF, sobald der Bericht ready ist: jede Buchung des Monats in zeitlicher Reihenfolge
+        und die Summen je Währung, Zeiten in UTC. Vorher oder bei failed 409.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Das PDF, mit Content-Disposition attachment und dem Namen buchungen-JJJJ-MM.pdf
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Der Bericht ist noch nicht fertig oder gescheitert
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   /v2/analytics/me/monthly:
     get:
@@ -219,6 +344,15 @@ components:
         format: date
         example: '2026-09-30'
 
+    ReportId:
+      name: reportId
+      in: path
+      required: true
+      description: Id des Berichts aus der Antwort auf den Antrag
+      schema:
+        type: string
+        format: uuid
+
     CorrelationId:
       name: X-Correlation-Id
       in: header
@@ -260,6 +394,60 @@ components:
         bookedAt:
           type: string
           format: date-time
+
+    ReportRequest:
+      type: object
+      required: [year, month]
+      additionalProperties: false
+      properties:
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+          example: 2026
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+          example: 9
+
+    Report:
+      type: object
+      description: |
+        Ein beantragter Monatsbericht. status ist requested, solange das PDF erzeugt wird,
+        danach ready mit bookingCount oder failed mit failure. Ein abgeschlossener Bericht
+        ändert sich nie wieder.
+      required: [reportId, year, month, status, requestedAt]
+      additionalProperties: false
+      properties:
+        reportId:
+          type: string
+          format: uuid
+        year:
+          type: integer
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        status:
+          type: string
+          enum: [requested, ready, failed]
+        bookingCount:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: Anzahl Buchungen im PDF, nur bei ready
+        failure:
+          type: string
+          nullable: true
+          description: Grund, nur bei failed
+        requestedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
 
     MonthlyTotal:
       type: object
@@ -364,6 +552,13 @@ components:
   responses:
     BadRequest:
       description: Die Eingabe ist ungültig, etwa from nach to, ein zu langer Zeitraum oder ein Jahr ausserhalb des erlaubten Bereichs
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    NotFound:
+      description: Den Bericht gibt es nicht, oder er gehört einem anderen Inhaber
       content:
         application/problem+json:
           schema:

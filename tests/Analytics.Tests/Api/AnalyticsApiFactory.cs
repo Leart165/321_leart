@@ -1,4 +1,5 @@
 using Analytics.Infrastructure.Messaging;
+using Analytics.Infrastructure.Outbox;
 using Analytics.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -8,8 +9,8 @@ using Microsoft.Extensions.Hosting;
 
 namespace Analytics.Tests.Api;
 
-// Die echte API gegen eine frische Testdatenbank, mit Test-Token. Die
-// Konsumenten laufen nicht mit: sie würden sonst am Broker der Entwicklungsumgebung Nachrichten abholen.
+// Die echte API gegen eine frische Testdatenbank, mit Test-Token. Konsumenten und Outbox laufen
+// nicht mit: sie würden sonst am Broker der Entwicklungsumgebung Nachrichten abholen und senden.
 public sealed class AnalyticsApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _connectionString;
@@ -36,6 +37,7 @@ public sealed class AnalyticsApiFactory : WebApplicationFactory<Program>
                 .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationType is not null
                     && (descriptor.ImplementationType.IsSubclassOf(typeof(QueueConsumer))
+                        || descriptor.ImplementationType == typeof(OutboxDispatcher)
                         || (!_migrate && descriptor.ImplementationType == typeof(DatabaseMigrator))))
                 .ToList();
             foreach (ServiceDescriptor consumer in consumers)

@@ -44,6 +44,19 @@ public sealed class FrontendTests : IClassFixture<PostgresFixture>, IDisposable
         Assert.Equal(mediaType, response.Content.Headers.ContentType?.MediaType);
     }
 
+    // Nach einem neuen Image muss der Browser die neuen Module laden, nicht die aus seinem Cache.
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/js/views/bookingsView.js")]
+    [InlineData("/css/app.css")]
+    public async Task The_browser_revalidates_the_page_on_every_load(string path)
+    {
+        HttpResponseMessage response = await _api.CreateClient().GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoCache, $"{path} ohne Cache-Control: no-cache");
+    }
+
     [Fact]
     public async Task The_config_names_the_keycloak_of_the_bank()
     {

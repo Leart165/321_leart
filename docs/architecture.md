@@ -61,10 +61,13 @@ Bank.
 
 ```
 src/
-  Analytics.Domain/          Buchung, Währung, Beitrag einer Buchung zu den Summen
-  Analytics.Application/     LedgerProjection (Summen führen), Ports ITotalsStore, I*TotalsReader
-  Analytics.Infrastructure/  Postgres (EF Core), RabbitMQ (Topologie, Konsumenten, Schema-Prüfung),
-                             OpenTelemetry
+  Analytics.Domain/          Buchung, Währung, Beitrag zu den Summen; Monatsbericht (Aggregat mit
+                             Zustand), Berichtszeitraum, Inhalt des Berichts (MonthlyStatement)
+  Analytics.Application/     LedgerProjection (Summen führen), ReportService (beantragen, erzeugen),
+                             Ports ITotalsStore, I*Reader, IMonthlyReportRepository, IReportEvents,
+                             IStatementRenderer, IUnitOfWork
+  Analytics.Infrastructure/  Postgres (EF Core), Outbox und Dispatcher, RabbitMQ (Topologie,
+                             Konsumenten, Schema-Prüfung), PDF ohne fremde Bibliothek, OpenTelemetry
   Analytics.Api/             Controller, DTOs, Keycloak-Prüfung mit Scopes, Readiness, Swagger,
                              Statistikseite unter wwwroot                            → Container
 tests/Analytics.Tests/       Domäne, Persistenz, Nachrichten, Broker, API, Kontrakte, Observability
@@ -114,6 +117,51 @@ gleichzeitig bekommen: die Eindeutigkeit sichert die Datenbank, nicht der Speich
 weiter, die Nachrichten warten in `analytics.partner`, und nach dem Start wird alles nachgeholt.
 Queues mit `analytics.` hat die Bank auf 100 MB begrenzt; darüber verwirft der Broker die ältesten
 Nachrichten, damit ein langsamer Partner die Bank nie bremst.
+
+## Asynchron: ein Monatsbericht als PDF
+
+Gebaut wie die Überweisung der Bank: annehmen, sofort antworten, im Hintergrund erledigen. Die
+Nachricht geht über einen **eigenen Topic-Exchange** `analytics.events`, so wie die Bank ihre
+Ereignisse über `bank.events` schickt. Kontrakt: `contracts/analytics/events.asyncapi.v1.yaml`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Statistikseite
+    participant A as analytics-api (API)
+    participant D as analyticsdb
+    participant O as Outbox-Dispatcher
+    participant B as RabbitMQ
+    participant K as Konsument analytics.reports
+
+    W->>A: POST /v2/analytics/me/reports {year, month}
+    A->>D: eine Transaktion: monthly_reports (requested) + outbox (report.requested)
+    A-->>W: 202 Accepted, Location
+    O->>D: SELECT ... FOR UPDATE SKIP LOCKED
+    O->>B: publish analytics.events / report.requested (Publisher Confirm)
+    O->>D: published_at setzen
+    B->>K: analytics.reports
+    K->>D: Buchungen des Monats lesen
+    K->>D: eine Transaktion: report_documents (PDF) + Status ready
+    K->>B: ack
+    loop jede Sekunde, solange requested
+        W->>A: GET /v2/analytics/me/reports/{id}
+    end
+    W->>A: GET /v2/analytics/me/reports/{id}/document
+    A-->>W: application/pdf
+```
+
+| Baustein | Wo | Warum |
+|---|---|---|
+| Aggregat `MonthlyReport`, Zustände `Requested → Ready \| Failed` | Domain | Ein abgeschlossener Bericht ändert sich nie wieder, wie der Überweisungsauftrag der Bank |
+| `MonthlyStatement` | Domain | Was im Bericht steht (Reihenfolge, Summen je Währung), unabhängig vom PDF |
+| `ReportService` | Application | `RequestAsync` in der API, `GenerateAsync` im Konsumenten |
+| Outbox | Infrastructure | Antrag und Ereignis werden zusammen gültig; steht der Broker, geht nichts verloren |
+| `xmin` als Concurrency-Token | Infrastructure | Bekommen zwei Instanzen denselben Antrag, gewinnt die erste, die zweite bestätigt nur |
+| PDF aus Standardschriften, schwarz-weiss | Infrastructure | Keine Schriftdateien und keine native Bibliothek im alpine-Image |
+
+Der Broker-Benutzer `analytics` darf alles mit dem Präfix `analytics.` anlegen und beschreiben;
+für den eigenen Exchange muss die Bank nichts ändern. Auf `bank.events` schreiben darf er nicht.
 
 ## Fehlerbehandlung beim Konsumieren
 
@@ -245,3 +293,5 @@ und RabbitMQ, auf `main` das Image für amd64 und arm64.
 | 2026-09-28 | 503 bei Datenbankausfall, 400 ohne `from`/`to`, 401/403 ohne Körper, keine liegen gebliebenen Kanäle | Review vom 25. September |
 | 2026-09-28 | `/ready`, Healthcheck, Abfliessen und `BasicCancel` beim Stoppen, zwei Replikas | Skalierung und Deployment ohne Lücke |
 | 2026-09-28 | Übersicht mit Saldo vom Kontendienst entfernt | Die Bank gibt dem Partner keinen Zugang zu Konten (`scopes.md`) |
+| 2026-09-28 | Buchungsprotokoll `GET /v2/analytics/me/bookings`, Tabelle `owner_bookings`, Reiter "Buchungen" | Kunden wollen jede einzelne Buchung sehen, nicht nur Summen |
+| 2026-10-02 | Monatsbericht als PDF: `POST /v2/analytics/me/reports` mit 202, Outbox, eigener Exchange `analytics.events`, Queue `analytics.reports`; Statistikseite in Graustufen | Beantragen wie die Überweisung der Bank; Seite ohne Farbe gewünscht |

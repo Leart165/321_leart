@@ -4,6 +4,7 @@ import {
 } from "../domain/bookings.js";
 import { currenciesOf, daysBetween, formatCount, formatDay, formatMoney } from "../domain/figures.js";
 import { card, dateInput, empty, kpi, loading, notice, select, table } from "./components.js";
+import { createReportsCard } from "./reportsCard.js";
 import { describe } from "./overviewView.js";
 import { h, replace } from "./dom.js";
 
@@ -17,15 +18,18 @@ export function createBookingsView({ api, range, onUnauthorized, onReconsent }) 
 
   const controls = h("div", { class: "controls" });
   const body = h("div", { class: "stack" });
+  const reports = createReportsCard({ api, onUnauthorized });
   const element = h("div", { class: "view" },
     h("div", { class: "view__head" },
       h("div", {},
         h("h1", {}, "Buchungen"),
         h("p", { class: "lead" }, "Jede Buchung, die deine Bank uns gemeldet hat, einzeln und neueste zuerst.")),
       controls),
-    body);
+    body,
+    reports.element);
 
   async function load() {
+    reports.load();
     renderControls();
     if (state.from > state.to) {
       replace(body, notice("warning", "Zeitraum ungültig", "Das Startdatum liegt nach dem Enddatum."));

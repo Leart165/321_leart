@@ -28,6 +28,20 @@ dem README zeigen.
   in der Spalte "Buchungen" eines Monats direkt zu den Buchungen dieses Monats.
 - Grafana, "Empfangene Nachrichten je Ergebnis": `analytics.partner`, `processed`.
 
+## 2b. Monatsbericht als PDF, über den eigenen Exchange (1.5 min)
+
+- Reiter "Buchungen", unten "Monatsbericht als PDF": Monat wählen, **Monatsbericht anfordern**.
+- Die Zeile steht sofort da mit "Wird erstellt …": die API hat mit **202** geantwortet und den
+  Antrag mit einem Eintrag in der Outbox in *einer* Transaktion gespeichert.
+- Nach etwa einer Sekunde "Bereit", dann **Herunterladen**: jede Buchung des Monats, Summen je
+  Währung, schwarz-weiss.
+- RabbitMQ, *Exchanges* → `analytics.events`: mein eigener Topic-Exchange, wie `bank.events` bei
+  der Bank. *Queues* → `analytics.reports`: 2 Consumers, dazu `analytics.reports.dlq`.
+- Grafana, Loki: `{container=~".*analytics.*"} |= "Monatsbericht"` zeigt "publiziert" vom
+  Dispatcher und "als PDF erstellt" vom Konsumenten, oft auf verschiedenen Instanzen.
+- Dazu sagen: "Wie die Überweisung der Bank: annehmen, sofort antworten, im Hintergrund erledigen.
+  Steht der Broker, bleibt der Antrag in der Outbox und geht später hinaus."
+
 ## 3. Eigener Ausfall und Nachholen (1.5 min)
 
 ```bash

@@ -19,7 +19,13 @@ public static class FrontendEndpoints
     {
         app.UseFrontendSecurityHeaders();
         app.UseDefaultFiles();
-        app.UseStaticFiles();
+
+        // no-cache heisst: der Browser darf die Datei behalten, fragt aber jedes Mal mit ETag nach.
+        // Ohne das zeigte er nach einem neuen Image noch tagelang die alten Module.
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            OnPrepareResponse = context => context.Context.Response.Headers.CacheControl = "no-cache"
+        });
         return app;
     }
 

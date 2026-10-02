@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
 
 namespace Analytics.Infrastructure.Messaging;
 
@@ -23,9 +24,11 @@ public sealed class PartnerTransactionsConsumer : QueueConsumer
         get { return MessagingTopology.PartnerQueue; }
     }
 
-    protected override BookingFormat Format
+    protected override Task<string> HandleAsync(IServiceProvider services, BasicDeliverEventArgs delivery)
     {
-        get { return BookingFormat.Partner; }
+        TransactionCompletedHandler handler = services.GetRequiredService<TransactionCompletedHandler>();
+        return handler.HandleAsync(
+            delivery.Body, BookingFormat.Partner, delivery.BasicProperties.Type, delivery.Redelivered, delivery.CancellationToken);
     }
 
     protected override async Task<bool> PrepareAsync(IConnection connection, IChannel channel, CancellationToken cancellationToken)
