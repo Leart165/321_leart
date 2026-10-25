@@ -56,7 +56,6 @@ public static class DependencyInjection
         services.TryAddSingleton(AsyncApiSchemas.FromEmbeddedContracts());
         services.AddScoped<TransactionCompletedHandler>();
         services.AddHostedService<PartnerTransactionsConsumer>();
-        services.AddHostedService<LegacyLedgerConsumer>();
         return services;
     }
 

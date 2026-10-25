@@ -14,7 +14,6 @@ flowchart LR
     subgraph broker["RabbitMQ der Bank"]
         ex{{"bank.events<br/>topic, gehört der Bank"}}
         partner["analytics.partner<br/>partner.transaction.completed"]
-        ledger["analytics.ledger<br/>transaction.completed<br/>alt, wird abgelöst"]
         dlx{{"analytics.dlx<br/>eigener Dead-Letter-Exchange"}}
         pdlq["analytics.partner.dlq"]
         aev{{"analytics.events<br/>topic, eigener Exchange"}}
@@ -33,9 +32,7 @@ flowchart LR
     db[("analyticsdb<br/>processed_transactions · owner_bookings<br/>owner_monthly · system_daily<br/>monthly_reports · outbox")]
 
     ex -->|"partner.transaction.completed"| partner
-    ex -.->|"transaction.completed, bis Contract"| ledger
     partner --> consumer
-    ledger -.-> consumer
     partner -->|"kontraktwidrig"| dlx --> pdlq
     consumer -->|"eine Transaktion:<br/>Dedup + Protokoll + Summen"| db
     kunde -->|"Sign in with Bank, PKCE"| kc
@@ -50,7 +47,7 @@ flowchart LR
 
 | Fall | Was passiert |
 |---|---|
-| Buchung kommt doppelt, auch über beide Queues oder auf beiden Instanzen gleichzeitig | zählt einmal: `transactionId` ist Primärschlüssel in `processed_transactions`, in derselben Transaktion wie die Summen |
+| Buchung kommt doppelt, auch auf beiden Instanzen gleichzeitig | zählt einmal: `transactionId` ist Primärschlüssel in `processed_transactions`, in derselben Transaktion wie die Summen |
 | Nachricht passt nicht zum Kontrakt | ohne Wiederholung in die Dead-Letter-Queue |
 | eigene Datenbank weg | Nachricht nach 2 s zurück in die Queue, nie in die DLQ; API antwortet 503 mit `Retry-After` |
 | Broker weg | alle 2 s neuer Versuch; die Bank publiziert über ihre Outbox weiter, nichts geht verloren |

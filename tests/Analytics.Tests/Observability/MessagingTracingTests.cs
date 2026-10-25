@@ -27,7 +27,7 @@ public sealed class MessagingTracingTests : IDisposable
     }
 
     [Fact]
-    public void Processing_continues_the_trace_of_the_bank()
+    public void Processing_continues_the_trace_of_the_sender()
     {
         Dictionary<string, object?> headers = new Dictionary<string, object?>
         {
@@ -35,13 +35,13 @@ public sealed class MessagingTracingTests : IDisposable
         };
 
         using Activity? activity = MessagingTracing.StartProcess(
-            MessagingTopology.LegacyQueue, MessagingTopology.LegacyRoutingKey, Guid.NewGuid().ToString(), "korrelation-1", headers);
+            ReportTopology.ReportsQueue, ReportTopology.ReportRequestedRoutingKey, Guid.NewGuid().ToString(), "korrelation-1", headers);
 
         Assert.NotNull(activity);
         Assert.Equal(ActivityKind.Consumer, activity.Kind);
         Assert.Equal("4bf92f3577b34da6a3ce929d0e0e4736", activity.TraceId.ToHexString());
         Assert.Equal("00f067aa0ba902b7", activity.ParentSpanId.ToHexString());
-        Assert.Equal($"process {MessagingTopology.LegacyQueue}", activity.DisplayName);
+        Assert.Equal($"process {ReportTopology.ReportsQueue}", activity.DisplayName);
     }
 
     // Partner-Ereignisse tragen absichtlich keinen traceparent: die Verarbeitung beginnt einen

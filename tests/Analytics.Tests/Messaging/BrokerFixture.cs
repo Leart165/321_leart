@@ -67,7 +67,7 @@ public sealed class BrokerFixture : IAsyncLifetime
         {
             exchange = "bank.events",
             write = "^$",
-            read = "^(transaction\\.completed|partner\\..+)$"
+            read = "^partner\\..+$"
         });
     }
 

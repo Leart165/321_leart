@@ -147,8 +147,8 @@ public abstract class QueueConsumer : BackgroundService
 
         string correlationId = ReadCorrelationId(delivery);
 
-        // Mit traceparent (transaction.completed, report.requested) setzt die Spanne den Trace des
-        // Absenders fort; ohne, wie beim Partner-Ereignis, beginnt hier ein eigener.
+        // Mit traceparent (report.requested) setzt die Spanne den Trace des Absenders fort; ohne,
+        // wie beim Partner-Ereignis, beginnt hier ein eigener.
         using Activity? activity = MessagingTracing.StartProcess(
             Queue, delivery.RoutingKey, delivery.BasicProperties.MessageId, correlationId,
             delivery.BasicProperties.Headers);

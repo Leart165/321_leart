@@ -90,40 +90,20 @@ dotnet test --filter "FullyQualifiedName~A_valid_token_without_the_scope"
 ## 5. Umstellung auf das Partner-Ereignis, Expand and Contract (2 min)
 
 Das ist mein Breaking Change: die Bank gibt mir statt ihres internen Ereignisses nur noch ein
-schlankes, ohne Buchungstext und Konto. Datenschutz.
+schlankes, ohne Buchungstext und Konto. Datenschutz. Die Umstellung ist abgeschlossen; gezeigt
+wird, wie sie lief und dass das System jetzt im Endzustand ist.
 
-**Expand** (Ausgangslage):
-
-- RabbitMQ: zwei Queues, `analytics.ledger` (alt, an `transaction.completed`) und
-  `analytics.partner` (neu, an `partner.transaction.completed`), beide mit zwei Konsumenten.
-- Eine Buchung machen. Grafana: `analytics.partner` `processed` und `analytics.ledger`
-  `duplicate`, oder umgekehrt. Sie kam zweimal und zählt einmal. In Loki:
-
-  ```logql
-  {service="analytics-api"} |= "Buchung"
-  ```
-
-  (Die JSON-Logs schreiben Umlaute als `\u00E4`; nach "gezählt" zu suchen fände deshalb nichts.)
-
-**Contract**:
-
-```bash
-ANALYTICS_LEGACY_QUEUE=Retire ANALYTICS_TAG=local docker compose --profile observability up -d analytics-api
-docker compose logs -f analytics-api | grep Contract
-```
-
-- Log: "Bindung von analytics.ledger an transaction.completed gelöst", dann "analytics.ledger ist
-  leer und gelöscht". RabbitMQ zeigt nur noch `analytics.partner`.
-- Eine Buchung machen: sie zählt weiter, jetzt nur noch über die Partner-Queue.
-
-**Abschluss durch die Bank**:
-
-```bash
-ANALYTICS_EVENTS=partner-only docker compose up -d broker-setup
-```
-
-- Ab jetzt darf mein Benutzer nur noch `partner.*` abonnieren. Kein Ausfall, keine Buchung doppelt,
-  keine verloren.
+- `contracts/analytics/asyncapi.v1.yaml` (alt, als abgelöst markiert) neben `asyncapi.v2.yaml`
+  (neu) zeigen: beide Versionen im gemeinsamen Repo, die alte bleibt als Nachweis.
+- Erklären: **Expand**: neue Queue `analytics.partner` dazu, die alte `analytics.ledger` lief
+  parallel weiter. Jede Buchung kam zweimal und zählte einmal, weil `transactionId` gleich ist.
+  **Contract**: Bindung der alten Queue gelöst, Rest gelesen, Queue gelöscht. **Abschluss**: die
+  Bank erlaubt nur noch `partner.*`. Alles live, ohne Ausfall, ohne gleichzeitiges Deployment.
+- Nachweis aus dem Lauf vom 25. Oktober in `docs/architecture.md` (Log-Meldungen des
+  Contract-Schritts).
+- RabbitMQ, *Queues*: nur noch `analytics.partner` und `analytics.reports`.
+- RabbitMQ, *Admin* → *Users* → `analytics` → *Topic permissions*: lesen nur `^partner\..+$`.
+- Eine Buchung machen: sie zählt über `analytics.partner`.
 
 ## Falls etwas klemmt
 
