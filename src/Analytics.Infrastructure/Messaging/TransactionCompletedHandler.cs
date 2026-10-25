@@ -31,7 +31,6 @@ public sealed class TransactionCompletedHandler
 
     public async Task<string> HandleAsync(
         ReadOnlyMemory<byte> body,
-        BookingFormat format,
         string? messageType,
         bool redelivered,
         CancellationToken cancellationToken)
@@ -53,7 +52,7 @@ public sealed class TransactionCompletedHandler
 
         try
         {
-            BookedTransaction transaction = Read(payload, format);
+            BookedTransaction transaction = Read(payload);
 
             bool counted = await _projection.ApplyAsync(transaction, cancellationToken);
             if (!counted)
@@ -98,17 +97,10 @@ public sealed class TransactionCompletedHandler
         }
     }
 
-    private static BookedTransaction Read(string payload, BookingFormat format)
+    private static BookedTransaction Read(string payload)
     {
-        return format switch
-        {
-            BookingFormat.Partner =>
-                (JsonSerializer.Deserialize<PartnerTransactionCompletedPayload>(payload, SerializerOptions)
-                    ?? throw new InvalidLedgerEventException("Der Nachrichtenkörper ist leer.")).ToBookedTransaction(),
-
-            _ =>
-                (JsonSerializer.Deserialize<TransactionCompletedPayload>(payload, SerializerOptions)
-                    ?? throw new InvalidLedgerEventException("Der Nachrichtenkörper ist leer.")).ToBookedTransaction()
-        };
+        PartnerTransactionCompletedPayload booking = JsonSerializer.Deserialize<PartnerTransactionCompletedPayload>(payload, SerializerOptions)
+            ?? throw new InvalidLedgerEventException("Der Nachrichtenkörper ist leer.");
+        return booking.ToBookedTransaction();
     }
 }

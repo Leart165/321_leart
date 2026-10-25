@@ -53,7 +53,6 @@ Bank.
 | Richtung | Protokoll | Kontrakt | Zweck |
 |---|---|---|---|
 | Bank → Analytics | AMQP, `bank.events` / `partner.transaction.completed` | `partner/asyncapi.v1.yaml`, `analytics/asyncapi.v2.yaml` | jede Buchung, ohne Konto und Buchungstext |
-| Bank → Analytics (bis Contract) | AMQP, `bank.events` / `transaction.completed` | `events/asyncapi.v1.yaml`, `analytics/asyncapi.v1.yaml` | die alte, interne Buchung |
 | Kunde → Analytics | HTTP über Traefik | `analytics/openapi.v1.yaml`, `auth/scopes.md` | Summen lesen |
 | Analytics → Keycloak | HTTPS, Discovery und JWKS | `auth/jwt.md` | Token prüfen |
 
@@ -92,9 +91,9 @@ sequenceDiagram
     participant D as analyticsdb
 
     K->>A: Einzahlung, Überweisung
-    A->>O: Buchung, transaction.completed und partner.transaction.completed in einer Transaktion
+    A->>O: Buchung und partner.transaction.completed in einer Transaktion
     O->>B: publiziert beide
-    B->>L: analytics.partner (Prefetch 10), bis zum Contract auch analytics.ledger
+    B->>L: analytics.partner (Prefetch 10)
     L->>L: Schema prüfen gegen partner/asyncapi.v1.yaml bzw. events/asyncapi.v1.yaml
     L->>D: eine Transaktion: processed_transactions + owner_bookings + owner_monthly + system_daily
     L->>B: ack
@@ -110,7 +109,7 @@ Protokoll beginnt mit Version 2; ältere Buchungen kennt der Dienst nur als Summ
 **Idempotenz.** RabbitMQ stellt mindestens einmal zu. `processed_transactions` hat die
 `transactionId` als Primärschlüssel; der Eintrag, das Protokoll und beide Summen gehen in *einer*
 Datenbanktransaktion hinaus (`INSERT ... ON CONFLICT DO NOTHING`, danach Upserts). Dieselbe
-Buchung zählt deshalb einmal, auch wenn sie über beide Queues kommt oder zwei Instanzen sie
+Buchung zählt deshalb einmal, auch wenn sie zweimal zugestellt wird oder zwei Instanzen sie
 gleichzeitig bekommen: die Eindeutigkeit sichert die Datenbank, nicht der Speicher eines Prozesses.
 
 **Entkopplung.** Fällt dieser Dienst aus, merkt die Bank nichts: sie publiziert über ihre Outbox
@@ -192,9 +191,13 @@ configure und write nur auf `analytics.*`, read auf `analytics.*` und `bank.even
 passiv und hat einen eigenen Dead-Letter-Exchange `analytics.dlx`; beides verweigert der Broker
 sonst mit `ACCESS_REFUSED` (getestet).
 
-Die alte Queue `analytics.ledger` hatte `bank.dlx` als Dead-Letter-Exchange, und Queue-Argumente
-lassen sich nicht ändern. Die Umstellung ist deshalb eine neue Queue, als **Expand and Contract**,
-gesteuert über `RabbitMq:LegacyQueue`:
+Am Anfang las der Dienst das interne Ereignis `transaction.completed` über die Queue
+`analytics.ledger`. Darin stehen Buchungstext und Konto, mehr als ein Partner wissen soll. Die
+alte Queue hatte zudem `bank.dlx` als Dead-Letter-Exchange, und Queue-Argumente lassen sich nicht
+ändern. Die Umstellung auf das Partner-Ereignis war deshalb eine neue Queue, als **Expand and
+Contract**. **Sie ist seit dem 25. Oktober 2026 abgeschlossen**: `analytics.ledger` ist gelöscht,
+der Code für die alte Queue ist entfernt, und der Benutzer `analytics` darf nur noch `partner.*`
+lesen.
 
 | Schritt | Wer | Was |
 |---|---|---|
@@ -202,10 +205,17 @@ gesteuert über `RabbitMq:LegacyQueue`:
 | Benutzer | Leart, PR an m321-main | `RabbitMq__User: analytics` |
 | Contract | Leart | `LegacyQueue=Retire`: Bindung an `transaction.completed` lösen, Rest lesen, `analytics.ledger` löschen, sobald leer; ihre DLQ ebenso, sobald leer |
 | Abschluss | Tim | `ANALYTICS_EVENTS=partner-only`, `guest` abschalten |
+| Aufräumen | Leart | Konsument für `analytics.ledger`, Format `transaction.completed` und die Einstellung `LegacyQueue` aus dem Code entfernt; `analytics/asyncapi.v1.yaml` als abgelöst markiert |
+
+Im laufenden System ausgeführt: beide Instanzen mit `LegacyQueue=Retire` gestartet; das Log meldete
+„Bindung von analytics.ledger an transaction.completed gelöst“, „analytics.ledger ist leer und
+gelöscht“ und „analytics.ledger.dlq ist leer und gelöscht“. Danach `ANALYTICS_EVENTS=partner-only`.
+Keine Buchung ging verloren, keine zählte doppelt, die Bank lief ohne Unterbruch weiter.
 
 Partner-Ereignisse tragen keinen `traceparent` und je Ereignis eine neue `correlation-id`. Ihre
 Verarbeitung beginnt deshalb einen eigenen Trace mit der `correlation-id` als
-`messaging.message.conversation_id`; nur die alte Queue setzt noch den Trace der Bank fort.
+`messaging.message.conversation_id`. Den Trace des Absenders setzt nur noch der eigene Auftrag
+`report.requested` fort.
 
 ## Security: Scope, Rolle, Besitz
 
@@ -295,3 +305,4 @@ und RabbitMQ, auf `main` das Image für amd64 und arm64.
 | 2026-09-28 | Übersicht mit Saldo vom Kontendienst entfernt | Die Bank gibt dem Partner keinen Zugang zu Konten (`scopes.md`) |
 | 2026-09-28 | Buchungsprotokoll `GET /v2/analytics/me/bookings`, Tabelle `owner_bookings`, Reiter "Buchungen" | Kunden wollen jede einzelne Buchung sehen, nicht nur Summen |
 | 2026-10-02 | Monatsbericht als PDF: `POST /v2/analytics/me/reports` mit 202, Outbox, eigener Exchange `analytics.events`, Queue `analytics.reports`; Statistikseite in Graustufen | Beantragen wie die Überweisung der Bank; Seite ohne Farbe gewünscht |
+| 2026-10-25 | Contract abgeschlossen: `analytics.ledger` live geleert und gelöscht, Konsument und altes Format aus dem Code entfernt, Benutzer `analytics` nur noch `partner.*` | Partner-Ereignis ersetzt das interne vollständig |

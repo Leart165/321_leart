@@ -28,7 +28,7 @@ public sealed class PartnerTransactionsConsumer : QueueConsumer
     {
         TransactionCompletedHandler handler = services.GetRequiredService<TransactionCompletedHandler>();
         return handler.HandleAsync(
-            delivery.Body, BookingFormat.Partner, delivery.BasicProperties.Type, delivery.Redelivered, delivery.CancellationToken);
+            delivery.Body, delivery.BasicProperties.Type, delivery.Redelivered, delivery.CancellationToken);
     }
 
     protected override async Task<bool> PrepareAsync(IConnection connection, IChannel channel, CancellationToken cancellationToken)

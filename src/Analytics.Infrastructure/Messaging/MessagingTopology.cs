@@ -3,9 +3,9 @@ using RabbitMQ.Client.Exceptions;
 
 namespace Analytics.Infrastructure.Messaging;
 
-// Namen am Broker, wie in contracts/analytics/asyncapi.v1.yaml (alte Queue) und
-// asyncapi.v2.yaml (Partner-Queue). Der Broker-Benutzer analytics darf nur analytics.* anlegen
-// und beschreiben; bank.events gehört der Bank und wird deshalb nur passiv deklariert.
+// Namen am Broker, wie in contracts/analytics/asyncapi.v2.yaml. Der Broker-Benutzer analytics darf
+// nur analytics.* anlegen und beschreiben; bank.events gehört der Bank und wird deshalb nur passiv
+// deklariert. Die alte Queue analytics.ledger ist seit dem Contract-Schritt abgelöst.
 public static class MessagingTopology
 {
     public const string Exchange = "bank.events";
@@ -14,13 +14,6 @@ public static class MessagingTopology
     public const string PartnerQueue = "analytics.partner";
     public const string PartnerDeadLetterQueue = "analytics.partner.dlq";
     public const string PartnerRoutingKey = "partner.transaction.completed";
-
-    // Version 1, bis zum Contract-Schritt: angelegt noch als guest, mit bank.dlx als
-    // Dead-Letter-Exchange. Queue-Argumente lassen sich nicht ändern, deshalb nur passiv.
-    public const string LegacyQueue = "analytics.ledger";
-    public const string LegacyDeadLetterQueue = "analytics.ledger.dlq";
-    public const string LegacyDeadLetterExchange = "bank.dlx";
-    public const string LegacyRoutingKey = "transaction.completed";
 
     public static async Task DeclarePartnerQueueAsync(IChannel channel, CancellationToken cancellationToken)
     {

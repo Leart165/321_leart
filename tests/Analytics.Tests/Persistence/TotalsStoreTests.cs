@@ -77,7 +77,7 @@ public sealed class TotalsStoreTests : IClassFixture<PostgresFixture>, IAsyncLif
         Assert.Equal(1, daily.Deposits);
     }
 
-    // Zwei Instanzen bekommen dieselbe Buchung gleichzeitig, etwa aus analytics.ledger und
+    // Zwei Instanzen bekommen dieselbe Buchung gleichzeitig, etwa auf zwei Instanzen und
     // analytics.partner. Die Eindeutigkeit sichert die Datenbank, nicht der Speicher eines Prozesses.
     [Fact]
     public async Task The_same_transaction_applied_concurrently_counts_once()

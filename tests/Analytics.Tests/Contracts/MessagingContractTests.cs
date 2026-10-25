@@ -4,8 +4,8 @@ using Xunit;
 
 namespace Analytics.Tests.Contracts;
 
-// Die Namen am Broker müssen genau die aus den Kontrakten sein: Version 1 für die alte Queue,
-// Version 2 für die Partner-Queue. Sonst bindet sich der Dienst an etwas, das die Bank nicht kennt.
+// Die Namen am Broker müssen genau die aus den Kontrakten sein. Sonst bindet sich der Dienst an
+// etwas, das die Bank nicht kennt.
 public sealed class MessagingContractTests
 {
     private static JsonElement Operation(string contract, string operation)
@@ -63,23 +63,10 @@ public sealed class MessagingContractTests
         Assert.All(created, name => Assert.StartsWith("analytics.", name, StringComparison.Ordinal));
     }
 
-    [Fact]
-    public void Version1_still_describes_the_legacy_queue_that_is_drained()
-    {
-        JsonElement queue = Operation("analytics/asyncapi.v1.yaml", "consumeTransactionCompleted").GetProperty("x-queue");
-        JsonElement channel = Channel("analytics/asyncapi.v1.yaml", "transactionCompleted");
-
-        Assert.Equal(MessagingTopology.LegacyQueue, queue.GetProperty("name").GetString());
-        Assert.Equal(MessagingTopology.LegacyDeadLetterQueue, queue.GetProperty("deadLetterQueue").GetString());
-        Assert.Equal(MessagingTopology.LegacyDeadLetterExchange, queue.GetProperty("deadLetterExchange").GetString());
-        Assert.Equal(MessagingTopology.LegacyRoutingKey, channel.GetProperty("address").GetString());
-        Assert.Equal(MessagingTopology.Exchange, ExchangeOf(channel));
-    }
-
     [Theory]
-    [InlineData("TransactionCompleted")]
     [InlineData("PartnerTransactionCompleted")]
-    public void The_embedded_schemas_know_both_events(string messageType)
+    [InlineData("ReportRequested")]
+    public void The_embedded_schemas_know_every_event_this_service_reads(string messageType)
     {
         Assert.True(AsyncApiSchemas.FromEmbeddedContracts().Knows(messageType));
     }

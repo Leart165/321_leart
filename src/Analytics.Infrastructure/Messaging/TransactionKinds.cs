@@ -3,7 +3,7 @@ using Analytics.Domain.Ledger;
 
 namespace Analytics.Infrastructure.Messaging;
 
-// Die Buchungsarten stehen in beiden Ereignissen der Bank gleich geschrieben. Bewusst ohne
+// Die Buchungsarten wie im Partner-Ereignis der Bank geschrieben. Bewusst ohne
 // Enum.Parse: eine unbekannte Art ist ein Fehler im Ereignis, keine Zahl, die zufällig passt.
 public static class TransactionKinds
 {

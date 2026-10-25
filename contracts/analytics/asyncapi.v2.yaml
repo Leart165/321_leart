@@ -9,7 +9,11 @@ info:
     des internen transaction.completed. Kanal, Nachricht und Schema gehören der Bank und werden
     hier nur referenziert.
 
-    Die Umstellung läuft als Expand and Contract, ohne Ausfall und ohne doppelt gezählte Buchung:
+    Stand: Die Umstellung ist seit dem 25. Oktober 2026 abgeschlossen. Es gilt nur noch diese
+    Version; analytics.ledger ist gelöscht, und die Bank erlaubt dem Broker-Benutzer analytics nur
+    noch partner.* (ANALYTICS_EVENTS=partner-only).
+
+    Die Umstellung lief als Expand and Contract, ohne Ausfall und ohne doppelt gezählte Buchung:
 
     1. Expand: analytics-api liest beide Queues, die alte analytics.ledger nach Version 1 und die
        neue analytics.partner nach dieser Version. Jede Buchung kommt zweimal an und zählt einmal,
