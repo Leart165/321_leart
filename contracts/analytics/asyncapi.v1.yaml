@@ -4,11 +4,6 @@ info:
   title: Analytics Events
   version: 1.0.0
   description: |
-    ABGELÖST seit dem 25. Oktober 2026 durch contracts/analytics/asyncapi.v2.yaml. Der
-    Contract-Schritt ist abgeschlossen: Die Queue analytics.ledger und ihre Dead-Letter-Queue sind
-    gelöscht, analytics-api liest transaction.completed nicht mehr. Die Datei bleibt als
-    Nachweis der Umstellung stehen und beschreibt keinen laufenden Konsumenten mehr.
-
     Ereignisbindung des Auswertungsdienstes. Kanal, Nachricht und das Schema
     TransactionCompleted sind in contracts/events/asyncapi.v1.yaml definiert und werden hier
     nur referenziert, nicht verändert; jener Kontrakt ist bereits veröffentlicht und

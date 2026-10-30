@@ -4,15 +4,6 @@ info:
   title: Analytics API
   version: 1.0.0
   description: |
-    STAND 30. Oktober 2026: Version 2 (contracts/analytics/openapi.v2.yaml) ist aktuell. Pfade,
-    Parameter und Antworten dieser Version bleiben gleich, aber die Buchungen kommen nicht mehr
-    aus transaction.completed: der Dienst liest sie mit dem Token des Kunden über
-    GET /v2/statements/bookings bei der Bank (contracts/statements/openapi.v2.yaml, ab 2.1.0) und
-    rechnet die Summen daraus. Fehlt im Token statements:read oder lehnt die Bank ab, antwortet
-    me/monthly mit 403 und scope="statements:read"; ist die Bank nicht erreichbar und nichts
-    gespeichert, mit 503. system/daily zeigt nur noch die Kunden, deren Buchungen mit Zustimmung
-    gespeichert sind. Die Beschreibung unten ist der Stand bei der Veröffentlichung.
-
     Auswertungsdienst der Bank-App. Er hält eine eigene Datenbank und kennt Buchungen
     ausschliesslich aus dem Ereignis transaction.completed, das er über die Queue
     analytics.ledger konsumiert, siehe contracts/analytics/asyncapi.v1.yaml. Er greift nie auf

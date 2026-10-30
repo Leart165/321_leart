@@ -249,6 +249,11 @@ Bank, sondern liest mit dem Token des Kunden über HTTP. Gründe:
 
 Keine Firma muss gleichzeitig mit der anderen deployen: zwischen den Schritten laufen beide Wege.
 
+`analytics/openapi.v1.yaml` bleibt unverändert, wie jeder veröffentlichte Kontrakt; die CI von
+`m321-main` lehnt jede Änderung an einer `*.v1.yaml` ab. Version 1 antwortet weiter im selben
+Format, liest aber ebenfalls bei der Bank: `me/monthly` kann deshalb neu 403 mit
+`scope="statements:read"` und 503 liefern. Beschrieben ist das in `analytics/openapi.v2.yaml`.
+
 ## Security: Scope, Rolle, Besitz
 
 Ein Zugriff braucht drei Dinge (`contracts/auth/scopes.md`):
