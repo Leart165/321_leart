@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: Statements API
-  version: 2.0.0
+  version: 2.1.0
   description: |
     Auszugsdienst der Bank-App, Version 2. Fachlich derselbe Auszug wie Version 1: Buchungen
     aus der eigenen Datenbank, dazu der Saldo.
@@ -22,6 +22,11 @@ info:
     Scope fehlt, liefert der Auszug die Summe seiner eigenen Einträge und markiert das im Feld
     balanceSource. Ein Partner, dem der Kunde nur statements:read erlaubt hat, bekommt so
     seinen Auszug, aber keinen Zugang zum Kontendienst.
+
+    Seit 2.1.0, additiv: GET /v2/statements/bookings liefert die Buchungen aller eigenen Konten
+    eines Zeitraums, ohne Buchungstext und Konto. Darüber liest ein Partner wie die
+    Analytics-Firma mit dem Token des Kunden, was er für seine Auswertung braucht, über HTTP und
+    ohne Zugang zum Broker der Bank.
 
     Version 1 läuft unverändert daneben, bis alle Konsumenten umgestellt sind.
   contact:
@@ -43,6 +48,62 @@ tags:
     description: Betrieb
 
 paths:
+  /v2/statements/bookings:
+    get:
+      tags: [statements]
+      operationId: listBookings
+      security:
+        - keycloak: [statements:read]
+      summary: Buchungen aller eigenen Konten in einem Zeitraum
+      description: |
+        Für Clients, denen der Kunde Lesezugriff auf seine Auszüge erlaubt hat, etwa die
+        Analytics-Firma über "Sign in with Bank": Client analytics-web, Scope statements:read,
+        den Keycloak erst nach der Zustimmung des Kunden ins Token schreibt. Entzieht der Kunde
+        sie, bekommt der Client kein solches Token mehr.
+
+        Der Inhaber kommt aus dem sub-Claim des Tokens, nie aus der Anfrage. Fremde Buchungen gibt
+        es deshalb nicht, und auch keine 404: wer keine Konten hat, bekommt eine leere Liste.
+
+        Jede Buchung trägt nur, was eine Auswertung braucht. Kein Buchungstext, weil der Namen oder
+        Zahlungszwecke enthalten kann, und kein Konto. Den vollständigen Auszug eines Kontos gibt
+        es unter /v2/statements/{accountId}; dafür braucht es die Id des Kontos.
+
+        Der Zeitraum ist halboffen: from gehört dazu, to nicht. Ein Monat ist also from = erster
+        Tag des Monats, to = erster Tag des nächsten. Höchstens 366 Tage. Sortiert nach bookedAt.
+
+        Die Buchungen stehen in der Datenbank des Auszugsdienstes. Eine Buchung erscheint hier,
+        sobald ihr Ereignis verarbeitet ist, meist nach Bruchteilen einer Sekunde. Der
+        Kontendienst wird nicht gefragt; fällt er aus, antwortet dieser Endpunkt weiter.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Beginn des Zeitraums, gehört dazu. Mit Zeitzone, etwa 2026-10-01T00:00:00Z
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: Ende des Zeitraums, gehört nicht dazu
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Die Buchungen im Zeitraum, vielleicht keine
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bookings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /v2/statements/{accountId}:
     get:
       tags: [statements]
@@ -141,6 +202,15 @@ components:
         maxLength: 100
 
   responses:
+    BadRequest:
+      description: |
+        from oder to fehlt oder ist kein Zeitpunkt, from liegt nicht vor to, oder der Zeitraum
+        ist länger als 366 Tage.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
     Unauthorized:
       description: |
         Kein Token, oder das Token ist ungültig: falscher Aussteller, falsche Audience,
@@ -223,6 +293,50 @@ components:
         description:
           type: string
           maxLength: 200
+        bookedAt:
+          type: string
+          format: date-time
+
+    Bookings:
+      type: object
+      required: [from, to, bookings]
+      additionalProperties: false
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: Beginn des Zeitraums in UTC, gehört dazu
+        to:
+          type: string
+          format: date-time
+          description: Ende des Zeitraums in UTC, gehört nicht dazu
+        bookings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Booking'
+
+    Booking:
+      type: object
+      required: [transactionId, kind, amount, currency, bookedAt]
+      additionalProperties: false
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+          description: |
+            Fachliche Kennung der Buchung, dieselbe wie im Kontendienst und im Ereignis
+            partner.transaction.completed. Eine Überweisung sind zwei Buchungen, TransferOut beim
+            Absender und TransferIn beim Empfänger, mit verschiedenen Kennungen.
+        kind:
+          type: string
+          enum: [Deposit, Withdrawal, TransferOut, TransferIn]
+        amount:
+          type: number
+          format: decimal
+          description: Immer positiv; ob Geld hinein- oder hinausgeht, sagt kind
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
         bookedAt:
           type: string
           format: date-time

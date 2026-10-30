@@ -5,10 +5,11 @@ using Xunit;
 
 namespace Analytics.Tests.Observability;
 
-// Der Trace der Bank läuft im Kopf traceparent über den Broker und wird hier fortgesetzt.
+// Der Trace der Anfrage läuft im Kopf traceparent über den eigenen Broker und wird im Konsumenten
+// fortgesetzt.
 public sealed class MessagingTracingTests : IDisposable
 {
-    private const string BankTraceParent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    private const string SenderTraceParent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
     private readonly ActivityListener _listener = new ActivityListener
     {
@@ -31,7 +32,7 @@ public sealed class MessagingTracingTests : IDisposable
     {
         Dictionary<string, object?> headers = new Dictionary<string, object?>
         {
-            [MessagingTracing.TraceParentHeader] = Encoding.UTF8.GetBytes(BankTraceParent)
+            [MessagingTracing.TraceParentHeader] = Encoding.UTF8.GetBytes(SenderTraceParent)
         };
 
         using Activity? activity = MessagingTracing.StartProcess(
@@ -44,23 +45,22 @@ public sealed class MessagingTracingTests : IDisposable
         Assert.Equal($"process {ReportTopology.ReportsQueue}", activity.DisplayName);
     }
 
-    // Partner-Ereignisse tragen absichtlich keinen traceparent: die Verarbeitung beginnt einen
-    // eigenen Trace und nennt nur die correlation-id des Ereignisses.
+    // Ohne traceparent beginnt die Verarbeitung einen eigenen Trace und nennt die correlation-id.
     [Fact]
-    public void A_partner_event_begins_its_own_trace_with_the_correlation_id()
+    public void A_message_without_traceparent_begins_its_own_trace_with_the_correlation_id()
     {
         Dictionary<string, object?> headers = new Dictionary<string, object?>
         {
-            ["correlation-id"] = Encoding.UTF8.GetBytes("partner-korrelation")
+            ["correlation-id"] = Encoding.UTF8.GetBytes("eigene-korrelation")
         };
 
         using Activity? activity = MessagingTracing.StartProcess(
-            MessagingTopology.PartnerQueue, MessagingTopology.PartnerRoutingKey, Guid.NewGuid().ToString(), "partner-korrelation", headers);
+            ReportTopology.ReportsQueue, ReportTopology.ReportRequestedRoutingKey, Guid.NewGuid().ToString(), "eigene-korrelation", headers);
 
         Assert.NotNull(activity);
         Assert.Equal(default, activity.ParentSpanId);
-        Assert.Equal("partner-korrelation", activity.GetTagItem("messaging.message.conversation_id"));
-        Assert.Equal(MessagingTopology.PartnerQueue, activity.GetTagItem("messaging.destination.name"));
+        Assert.Equal("eigene-korrelation", activity.GetTagItem("messaging.message.conversation_id"));
+        Assert.Equal(ReportTopology.ReportsQueue, activity.GetTagItem("messaging.destination.name"));
     }
 
     [Theory]
@@ -71,7 +71,7 @@ public sealed class MessagingTracingTests : IDisposable
     public void The_outcome_is_recorded_on_the_span(string outcome, ActivityStatusCode status)
     {
         using Activity? activity = MessagingTracing.StartProcess(
-            MessagingTopology.PartnerQueue, MessagingTopology.PartnerRoutingKey, null, null, headers: null);
+            ReportTopology.ReportsQueue, ReportTopology.ReportRequestedRoutingKey, null, null, headers: null);
 
         MessagingTracing.Complete(activity, outcome);
 

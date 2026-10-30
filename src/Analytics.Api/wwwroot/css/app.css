@@ -791,3 +791,9 @@ td time {
   width: 12px;
   height: 12px;
 }
+
+/* Die Bank war nicht erreichbar: die Zahlen sind der gespeicherte Stand. */
+.statusbar__stale {
+  color: var(--negative);
+  font-weight: 600;
+}

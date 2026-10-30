@@ -18,6 +18,8 @@ public static class ObservabilityExtensions
         "Microsoft.AspNetCore.Server.Kestrel",
         "System.Net.Http",
         "System.Runtime",
+        // Wiederholungen und Kreis auf dem Weg zur Bank, mit pipeline_name statements-api.
+        "Polly",
         "Analytics.*"
     };
 

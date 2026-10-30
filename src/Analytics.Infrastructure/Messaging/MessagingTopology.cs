@@ -3,47 +3,13 @@ using RabbitMQ.Client.Exceptions;
 
 namespace Analytics.Infrastructure.Messaging;
 
-// Namen am Broker, wie in contracts/analytics/asyncapi.v2.yaml. Der Broker-Benutzer analytics darf
-// nur analytics.* anlegen und beschreiben; bank.events gehört der Bank und wird deshalb nur passiv
-// deklariert. Die alte Queue analytics.ledger ist seit dem Contract-Schritt abgelöst.
+// Gemeinsame Namen am eigenen Broker der Analytics-Firma. Mit dem Broker der Bank spricht dieser
+// Dienst nicht mehr: die Buchungen kommen über HTTP, siehe Bank/StatementsBookings.
 public static class MessagingTopology
 {
-    public const string Exchange = "bank.events";
-
+    // Jede Queue hat über diesen Exchange ihre eigene Dead-Letter-Queue; der Routing Key ist der
+    // Name der Queue.
     public const string DeadLetterExchange = "analytics.dlx";
-    public const string PartnerQueue = "analytics.partner";
-    public const string PartnerDeadLetterQueue = "analytics.partner.dlq";
-    public const string PartnerRoutingKey = "partner.transaction.completed";
-
-    public static async Task DeclarePartnerQueueAsync(IChannel channel, CancellationToken cancellationToken)
-    {
-        await channel.ExchangeDeclarePassiveAsync(Exchange, cancellationToken);
-
-        await channel.ExchangeDeclareAsync(
-            DeadLetterExchange, ExchangeType.Direct, durable: true, autoDelete: false,
-            cancellationToken: cancellationToken);
-
-        await channel.QueueDeclareAsync(
-            PartnerDeadLetterQueue, durable: true, exclusive: false, autoDelete: false,
-            cancellationToken: cancellationToken);
-
-        await channel.QueueBindAsync(
-            PartnerDeadLetterQueue, DeadLetterExchange, PartnerQueue,
-            cancellationToken: cancellationToken);
-
-        await channel.QueueDeclareAsync(
-            PartnerQueue, durable: true, exclusive: false, autoDelete: false,
-            arguments: new Dictionary<string, object?>
-            {
-                ["x-dead-letter-exchange"] = DeadLetterExchange,
-                ["x-dead-letter-routing-key"] = PartnerQueue
-            },
-            cancellationToken: cancellationToken);
-
-        await channel.QueueBindAsync(
-            PartnerQueue, Exchange, PartnerRoutingKey,
-            cancellationToken: cancellationToken);
-    }
 
     // Gibt die Anzahl wartender Nachrichten zurück, oder null, wenn es die Queue nicht gibt.
     // Eine passive Deklaration einer fehlenden Queue schliesst den Kanal, deshalb ein eigener.

@@ -1,4 +1,5 @@
 using Analytics.Api.Authentication;
+using Analytics.Api.Bank;
 using Analytics.Api.Dtos;
 using Analytics.Application.Abstractions;
 using Analytics.Application.Ledger;
@@ -9,8 +10,9 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Analytics.Api.Controllers.V2;
 
-// Expand: Version 1 bleibt unverändert. Version 2 bietet dieselben Summen und dazu das
-// Buchungsprotokoll, siehe contracts/analytics/openapi.v2.yaml.
+// Version 2: dieselben Summen wie Version 1 und dazu das Buchungsprotokoll, siehe
+// contracts/analytics/openapi.v2.yaml. Buchungen und Summen kommen von der Bank, gelesen mit dem
+// Token des Kunden; ist sie nicht erreichbar, der gespeicherte Stand, markiert in X-Data-Source.
 [ApiController]
 [Route("v2/analytics")]
 [Produces("application/json")]
@@ -20,15 +22,13 @@ public sealed class AnalyticsController : ControllerBase
     private const int DefaultDays = 30;
     private const int MaxDays = 366;
 
-    private readonly IMonthlyTotalsReader _monthlyTotals;
+    private readonly CustomerLedger _ledger;
     private readonly IDailyTotalsReader _dailyTotals;
-    private readonly IBookingLogReader _bookings;
 
-    public AnalyticsController(IMonthlyTotalsReader monthlyTotals, IDailyTotalsReader dailyTotals, IBookingLogReader bookings)
+    public AnalyticsController(CustomerLedger ledger, IDailyTotalsReader dailyTotals)
     {
-        _monthlyTotals = monthlyTotals;
+        _ledger = ledger;
         _dailyTotals = dailyTotals;
-        _bookings = bookings;
     }
 
     // Jede einzelne Buchung des Inhabers, neueste zuerst. Ohne Angabe die letzten 30 Tage.
@@ -37,6 +37,7 @@ public sealed class AnalyticsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<IReadOnlyList<BookingDto>>> GetMyBookingsAsync(
         [FromQuery] DateOnly? from,
         [FromQuery] DateOnly? to,
@@ -57,8 +58,16 @@ public sealed class AnalyticsController : ControllerBase
         }
 
         // Besitzregel: der Inhaber kommt aus dem Token, nie aus der Anfrage.
-        IReadOnlyList<BookingEntry> entries = await _bookings.GetForOwnerAsync(User.OwnerId(), first, last, limit, cancellationToken);
-        return Ok(entries.Select(BookingDto.From).ToList());
+        LedgerSnapshot snapshot = await _ledger.GetBookingsAsync(
+            User.OwnerId(), User.HasConsentedToBankBookings(), first, last, cancellationToken);
+        DataSource.Report(Response, snapshot.Source);
+
+        return Ok(snapshot.Bookings
+            .OrderByDescending(entry => entry.BookedAt)
+            .ThenBy(entry => entry.TransactionId)
+            .Take(limit)
+            .Select(BookingDto.From)
+            .ToList());
     }
 
     [HttpGet("me/monthly")]
@@ -66,14 +75,19 @@ public sealed class AnalyticsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<IReadOnlyList<MonthlyTotalDto>>> GetMyMonthlyAsync(
         [FromQuery][Range(2000, 2100)] int year,
         CancellationToken cancellationToken)
     {
-        IReadOnlyList<MonthlyTotal> totals = await _monthlyTotals.GetForOwnerAsync(User.OwnerId(), year, cancellationToken);
-        return Ok(totals.Select(MonthlyTotalDto.From).ToList());
+        MonthlyOverview overview = await _ledger.GetMonthlyAsync(
+            User.OwnerId(), User.HasConsentedToBankBookings(), year, cancellationToken);
+        DataSource.Report(Response, overview.Source);
+        return Ok(overview.Months.Select(MonthlyTotalDto.From).ToList());
     }
 
+    // Nur über Kunden, deren Buchungen mit ihrer Zustimmung bei uns gespeichert sind: bankweite
+    // Zahlen gibt die Bank keinem fremden Client. Die Rolle bank-admin prüft dieser Dienst selbst.
     [HttpGet("system/daily")]
     [Authorize(Roles = JwtAuthentication.AdminRole)]
     [ProducesResponseType<IReadOnlyList<DailyTotalDto>>(StatusCodes.Status200OK)]

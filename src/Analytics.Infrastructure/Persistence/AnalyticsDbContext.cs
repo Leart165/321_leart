@@ -12,21 +12,6 @@ public sealed class AnalyticsDbContext : DbContext
     {
     }
 
-    public DbSet<ProcessedTransaction> ProcessedTransactions
-    {
-        get { return Set<ProcessedTransaction>(); }
-    }
-
-    public DbSet<OwnerMonthly> OwnerMonthly
-    {
-        get { return Set<OwnerMonthly>(); }
-    }
-
-    public DbSet<SystemDaily> SystemDaily
-    {
-        get { return Set<SystemDaily>(); }
-    }
-
     public DbSet<OwnerBooking> OwnerBookings
     {
         get { return Set<OwnerBooking>(); }

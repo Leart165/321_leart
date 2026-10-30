@@ -5,10 +5,10 @@ import { h, replace } from "./dom.js";
 
 const SCOPE_TEXT = {
   "analytics:read": "Deine Summen und einzelnen Buchungen bei uns lesen",
-  "statements:read": "Deine Kontoauszüge bei der Bank lesen"
+  "statements:read": "Deine Buchungen bei der Bank lesen, ohne Buchungstext und Konto"
 };
 
-// Meine Übersicht: Summen eines Jahres je Monat, aus den Buchungen, die die Bank uns meldet.
+// Meine Übersicht: Summen eines Jahres je Monat, aus den Buchungen, die wir bei der Bank lesen.
 export function createOverviewView({ api, session, onUnauthorized, onReconsent }) {
   const thisYear = new Date().getFullYear();
   const state = { year: thisYear, currency: null, months: null };
@@ -19,7 +19,7 @@ export function createOverviewView({ api, session, onUnauthorized, onReconsent }
     h("div", { class: "view__head" },
       h("div", {},
         h("h1", {}, "Meine Übersicht"),
-        h("p", { class: "lead" }, "Einnahmen und Ausgaben je Monat, aus den Buchungen, die deine Bank uns meldet.")),
+        h("p", { class: "lead" }, "Einnahmen und Ausgaben je Monat, aus den Buchungen, die wir mit deiner Erlaubnis bei deiner Bank lesen.")),
       controls),
     body);
 
@@ -66,7 +66,7 @@ export function createOverviewView({ api, session, onUnauthorized, onReconsent }
   function yearCards() {
     if (state.months.length === 0) {
       return card(`Jahr ${state.year}`, null,
-        empty(`Keine Buchungen in ${state.year}`, "Sobald deine Bank eine Buchung meldet, erscheint sie hier innert Sekunden."));
+        empty(`Keine Buchungen in ${state.year}`, "Sobald du bei deiner Bank buchst, erscheint die Buchung hier."));
     }
 
     const totals = yearTotals(state.months, state.currency);

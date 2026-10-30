@@ -14,9 +14,8 @@ info:
     analytics.reports. So nimmt die API weiter Anträge an, auch wenn das Erzeugen gerade hängt,
     und beide Instanzen teilen sich die Arbeit.
 
-    Exchange und Queues gehören der Analytics-Firma. Der Broker-Benutzer analytics darf nach
-    rabbitmq/partner-access.sh alles mit dem Präfix analytics. anlegen, beschreiben und lesen;
-    die Bank braucht dafür nichts zu tun.
+    Exchange, Queues und Broker gehören der Analytics-Firma: analytics-rabbitmq, nur im Netz
+    partner. Die Bank hat damit nichts zu tun und kommt nicht daran.
 
     Zustellgarantie ist "mindestens einmal". Doppelte Nachrichten erkennt der Konsument daran,
     dass der Bericht reportId schon erstellt ist.
@@ -35,9 +34,9 @@ defaultContentType: application/json
 
 servers:
   broker:
-    host: rabbitmq:5672
+    host: analytics-rabbitmq:5672
     protocol: amqp
-    description: RabbitMQ im Compose-Netzwerk
+    description: Der eigene RabbitMQ der Analytics-Firma im Compose-Netzwerk
 
 channels:
   reportRequested:
@@ -93,7 +92,9 @@ operations:
       $ref: '#/channels/reportsQueue'
     summary: analytics-api erzeugt das PDF.
     description: |
-      Erzeugt das PDF aus dem Buchungsprotokoll des Inhabers und setzt den Bericht auf ready,
+      Erzeugt das PDF aus den Buchungen, die analytics-api beim Antrag mit dem Token des Kunden
+      bei der Bank gelesen und gespeichert hat; ein Token steht nie in der Nachricht. Setzt den
+      Bericht auf ready,
       oder auf failed mit einem Grund, den eine Wiederholung nicht behebt. Ist der Bericht schon
       erledigt, wird die Nachricht nur bestätigt. Passt sie nicht zum Schema oder gibt es den
       Bericht nicht, geht sie ohne Wiederholung in analytics.reports.dlq. Ist nur die eigene

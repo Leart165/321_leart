@@ -1,0 +1,12 @@
+# Dashboards, die Grafana beim Start aus /etc/grafana/dashboards lädt. Die Dateien in
+# observability/grafana/dashboards sind die Wahrheit; Bearbeiten in der Oberfläche ist gesperrt.
+
+apiVersion: 1
+
+providers:
+  - name: analytics
+    folder: Analytics
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

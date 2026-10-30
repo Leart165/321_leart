@@ -1,4 +1,5 @@
 using Analytics.Api.Authentication;
+using Analytics.Api.Bank;
 using Analytics.Api.Dtos;
 using Analytics.Application.Abstractions;
 using Analytics.Application.Ledger;
@@ -15,12 +16,12 @@ namespace Analytics.Api.Controllers;
 [Authorize(Policy = Scopes.AnalyticsRead)]
 public sealed class AnalyticsController : ControllerBase
 {
-    private readonly IMonthlyTotalsReader _monthlyTotals;
+    private readonly CustomerLedger _ledger;
     private readonly IDailyTotalsReader _dailyTotals;
 
-    public AnalyticsController(IMonthlyTotalsReader monthlyTotals, IDailyTotalsReader dailyTotals)
+    public AnalyticsController(CustomerLedger ledger, IDailyTotalsReader dailyTotals)
     {
-        _monthlyTotals = monthlyTotals;
+        _ledger = ledger;
         _dailyTotals = dailyTotals;
     }
 
@@ -33,9 +34,12 @@ public sealed class AnalyticsController : ControllerBase
         [FromQuery][Range(2000, 2100)] int year,
         CancellationToken cancellationToken)
     {
-        // Besitzregel: der Inhaber kommt aus dem Token, nie aus der Anfrage.
-        IReadOnlyList<MonthlyTotal> totals = await _monthlyTotals.GetForOwnerAsync(User.OwnerId(), year, cancellationToken);
-        return Ok(totals.Select(MonthlyTotalDto.From).ToList());
+        // Besitzregel: der Inhaber kommt aus dem Token, nie aus der Anfrage. Die Summen rechnet der
+        // Dienst aus den Buchungen, die er mit dem Token des Kunden bei der Bank liest.
+        MonthlyOverview overview = await _ledger.GetMonthlyAsync(
+            User.OwnerId(), User.HasConsentedToBankBookings(), year, cancellationToken);
+        DataSource.Report(Response, overview.Source);
+        return Ok(overview.Months.Select(MonthlyTotalDto.From).ToList());
     }
 
     [HttpGet("system/daily")]

@@ -1,0 +1,57 @@
+# Tempo als einzelner Prozess mit Ablage im Dateisystem, nach dem Beispiel von Grafana für
+# Docker Compose. Die Traces kommen von Alloy über OTLP.
+#
+# Der Metrics Generator rechnet aus den Spannen zwei Dinge und schreibt sie ins eigene
+# Prometheus: den Service Graph, also wer wen aufruft, und Anzahl und Dauer der Spannen.
+#
+# Hier liegen nur die Spannen der Analytics-Firma. Ruft sie die Bank auf, trägt der Aufruf den
+# traceparent mit; die Spannen der Bank liegen im Tempo der Bank, unter derselben Trace-Id.
+
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+
+ingester:
+  # Kurz, damit Traces schnell durchsuchbar sind. Für die Menge hier unkritisch.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # Sieben Tage, wie die Logs in Loki.
+    block_retention: 168h
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://analytics-prometheus:9090/api/v1/write
+  traces_storage:
+    path: /var/tempo/generator/traces
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics, local-blocks]
+
+usage_report:
+  reporting_enabled: false

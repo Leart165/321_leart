@@ -1,0 +1,148 @@
+// Alloy der Analytics-Firma. Sammelt nur die eigenen Container: analytics-api, den eigenen
+// Broker und die eigene Datenbank. Logs gehen an das eigene Loki, Traces an das eigene Tempo,
+// Metriken an das eigene Prometheus. Die Bank sieht davon nichts, und dieser Alloy sieht nichts
+// von der Bank.
+//
+// Welche Compose-Projekte gelesen werden, steht in LOG_PROJECTS: allein gestartet heisst das
+// Projekt "analytics", im Gesamtsystem "m321".
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+// Nur die Regeln, angewendet werden sie in loki.source.docker.
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = coalesce(sys.env("LOG_PROJECTS"), "analytics|m321")
+    action        = "keep"
+  }
+
+  // Nur die eigenen Dienste, auch wenn der Docker-Socket alle Container zeigt.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "analytics-.*|analyticsdb"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Der Containername unterscheidet die beiden Instanzen von analytics-api.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.containers.receiver]
+}
+
+// analytics-api schreibt JSON. Stufe, Trace-Id und Korrelations-Id stehen darin, die Ids im
+// Scope, dessen Reihenfolge wechselt; die Ausdrücke suchen deshalb den Eintrag mit dem Feld.
+// Zeilen, die kein JSON sind, etwa von Postgres und RabbitMQ, gehen unverändert durch.
+loki.process "containers" {
+  stage.json {
+    expressions = {
+      level          = "LogLevel || level",
+      trace_id       = "(Scopes[?TraceId] | [0].TraceId) || TraceId",
+      correlation_id = "(Scopes[?CorrelationId] | [0].CorrelationId) || State.CorrelationId",
+    }
+  }
+
+  // Die Stufe ist ein Label: wenige Werte, oft gefiltert.
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  // Trace-Id und Korrelations-Id sind je Anfrage verschieden, also keine Labels.
+  stage.structured_metadata {
+    values = {
+      trace_id       = "",
+      correlation_id = "",
+    }
+  }
+
+  forward_to = [loki.write.loki.receiver]
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://analytics-loki:3100/loki/api/v1/push"
+  }
+}
+
+// --- Metriken und Traces ----------------------------------------------------------------------
+
+// analytics-api schickt über OTLP, weil OTEL_EXPORTER_OTLP_ENDPOINT auf diesen Sammler zeigt.
+otelcol.receiver.otlp "services" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.services.input]
+    traces  = [otelcol.processor.batch.services.input]
+  }
+}
+
+otelcol.processor.batch "services" {
+  output {
+    metrics = [otelcol.exporter.prometheus.services.input]
+    traces  = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "analytics-tempo:4317"
+
+    // Innerhalb des Docker-Netzes, ohne TLS.
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// Der Dienstname wird zu job, die Instanz zu instance.
+otelcol.exporter.prometheus "services" {
+  forward_to = [prometheus.remote_write.prometheus.receiver]
+}
+
+prometheus.remote_write "prometheus" {
+  endpoint {
+    url = "http://analytics-prometheus:9090/api/v1/write"
+  }
+}
+
+// Die Länge und die Konsumenten jeder Queue am eigenen Broker. Erst /metrics/detailed liefert
+// die Queues einzeln, und nur die beiden Familien, die das Dashboard braucht.
+prometheus.scrape "analytics_rabbitmq" {
+  job_name        = "analytics-rabbitmq"
+  targets         = [{ "__address__" = "analytics-rabbitmq:15692" }]
+  metrics_path    = "/metrics/detailed"
+  params          = { "family" = ["queue_coarse_metrics", "queue_consumer_count"] }
+  scrape_interval = "10s"
+  forward_to      = [prometheus.remote_write.prometheus.receiver]
+}

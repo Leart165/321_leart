@@ -3,8 +3,9 @@ using System.Text;
 
 namespace Analytics.Infrastructure.Messaging;
 
-// W3C Trace Context über den Broker, wie ihn die Bank im Kopf traceparent mitschickt. Nur
-// System.Diagnostics: OpenTelemetry liest die Spannen mit, sobald es eingeschaltet ist.
+// W3C Trace Context über den eigenen Broker im Kopf traceparent: die Outbox setzt ihn beim
+// Publizieren, der Konsument setzt den Trace fort. Nur System.Diagnostics: OpenTelemetry liest die
+// Spannen mit, sobald es eingeschaltet ist.
 public static class MessagingTracing
 {
     public const string SourceName = "Analytics.Messaging";

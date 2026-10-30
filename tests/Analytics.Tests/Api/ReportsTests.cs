@@ -1,5 +1,6 @@
 using Analytics.Application.Reports;
 using Analytics.Infrastructure.Persistence;
+using Analytics.Tests.Bank;
 using Analytics.Tests.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -124,6 +125,50 @@ public sealed class ReportsTests : IClassFixture<PostgresFixture>, IAsyncLifetim
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Contains("insufficient_scope", Assert.Single(response.Headers.GetValues("WWW-Authenticate")));
+    }
+
+    [Fact]
+    public async Task A_request_reads_exactly_the_month_at_the_bank_and_keeps_its_bookings()
+    {
+        _api.Bank.Book(TestTokenIssuer.Subject, "Deposit", 100m, DateTimeOffset.Parse("2026-09-30T23:59:00Z"));
+        _api.Bank.Book(TestTokenIssuer.Subject, "Deposit", 999m, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
+
+        HttpResponseMessage response = await _api.ClientWith(_tokens.Customer()).PostAsJsonAsync(Reports, new { year = 2026, month = 9 });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        BankCall call = Assert.Single(_api.Bank.Calls);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-01T00:00:00Z"), DateTimeOffset.Parse(call.From!));
+        Assert.Equal(DateTimeOffset.Parse("2026-10-01T00:00:00Z"), DateTimeOffset.Parse(call.To!));
+        await using AnalyticsDbContext context = _postgres.CreateContext();
+        Assert.Equal(100m, (await context.OwnerBookings.SingleAsync()).Amount);
+    }
+
+    [Fact]
+    public async Task Without_consent_for_the_bank_no_report_is_requested()
+    {
+        string token = _tokens.Issue(new TokenSpec { Scope = "openid analytics:read" });
+
+        HttpResponseMessage response = await _api.ClientWith(token).PostAsJsonAsync(Reports, new { year = 2026, month = 9 });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains("scope=\"statements:read\"", Assert.Single(response.Headers.GetValues("WWW-Authenticate")));
+        await using AnalyticsDbContext context = _postgres.CreateContext();
+        Assert.Equal(0, await context.MonthlyReports.CountAsync());
+    }
+
+    // Ein Bericht soll den ganzen Monat zeigen: ohne Bank kein Antrag, und nichts bleibt halb liegen.
+    [Fact]
+    public async Task When_the_bank_is_down_the_request_is_503_and_leaves_nothing_behind()
+    {
+        _api.Bank.BeUnreachable();
+
+        HttpResponseMessage response = await _api.ClientWith(_tokens.Customer()).PostAsJsonAsync(Reports, new { year = 2026, month = 9 });
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.NotNull(response.Headers.RetryAfter);
+        await using AnalyticsDbContext context = _postgres.CreateContext();
+        Assert.Equal(0, await context.MonthlyReports.CountAsync());
+        Assert.Equal(0, await context.Outbox.CountAsync());
     }
 
     [Fact]

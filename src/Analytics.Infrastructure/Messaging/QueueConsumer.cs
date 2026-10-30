@@ -147,8 +147,8 @@ public abstract class QueueConsumer : BackgroundService
 
         string correlationId = ReadCorrelationId(delivery);
 
-        // Mit traceparent (report.requested) setzt die Spanne den Trace des Absenders fort; ohne,
-        // wie beim Partner-Ereignis, beginnt hier ein eigener.
+        // Mit traceparent setzt die Spanne den Trace des Absenders fort; ohne, etwa bei einer von
+        // Hand eingeworfenen Nachricht, beginnt hier ein eigener.
         using Activity? activity = MessagingTracing.StartProcess(
             Queue, delivery.RoutingKey, delivery.BasicProperties.MessageId, correlationId,
             delivery.BasicProperties.Headers);
@@ -227,7 +227,8 @@ public abstract class QueueConsumer : BackgroundService
     }
 
     // Schliesst und entsorgt den Kanal auch nach einem Fehler, damit keine Kanäle liegen bleiben:
-    // der Broker erlaubt dem Benutzer analytics höchstens 50.
+    // ein Broker begrenzt die Kanäle je Verbindung, und ein Konsument, der beim Start immer wieder
+    // scheitert, würde sie sonst aufbrauchen.
     private async Task CloseChannelAsync()
     {
         IChannel? channel = _channel;

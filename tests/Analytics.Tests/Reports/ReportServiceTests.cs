@@ -1,10 +1,13 @@
+using Analytics.Application.Abstractions;
+using Analytics.Application.Bank;
+using Analytics.Application.Ledger;
 using Analytics.Application.Reports;
-using Analytics.Domain.Ledger;
 using Analytics.Domain.Reports;
 using Analytics.Infrastructure;
 using Analytics.Infrastructure.Messaging;
 using Analytics.Infrastructure.Outbox;
 using Analytics.Infrastructure.Persistence;
+using Analytics.Tests.Bank;
 using Analytics.Tests.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -14,19 +17,22 @@ using Xunit;
 
 namespace Analytics.Tests.Reports;
 
-// Beantragen und Erzeugen gegen eine echte Datenbank: Bericht und Outbox in einer Transaktion,
-// Erzeugen idempotent, auch wenn zwei Instanzen denselben Antrag gleichzeitig bearbeiten.
+// Beantragen und Erzeugen gegen eine echte Datenbank: die Buchungen des Monats von der Bank,
+// Bericht und Outbox in einer Transaktion, Erzeugen idempotent, auch wenn zwei Instanzen denselben
+// Antrag gleichzeitig bearbeiten.
 public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncLifetime, IDisposable
 {
     private const string Owner = "kunde-1";
 
     private readonly PostgresFixture _postgres;
     private readonly ServiceProvider _services;
+    private readonly InMemoryBank _bank;
 
     public ReportServiceTests(PostgresFixture postgres)
     {
         _postgres = postgres;
         _services = Services(postgres.ConnectionString);
+        _bank = _services.GetRequiredService<InMemoryBank>();
     }
 
     public Task InitializeAsync()
@@ -69,10 +75,10 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
     [Fact]
     public async Task Generating_creates_the_pdf_from_the_bookings_of_the_month_and_marks_it_ready()
     {
-        await BookAsync(Owner, 100m, new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero));
-        await BookAsync(Owner, 50m, new DateTimeOffset(2026, 9, 30, 23, 59, 0, TimeSpan.Zero));
-        await BookAsync(Owner, 999m, new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
-        await BookAsync("jemand-anders", 999m, new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero));
+        _bank.Deposit(100m, new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero));
+        _bank.Deposit(50m, new DateTimeOffset(2026, 9, 30, 23, 59, 0, TimeSpan.Zero));
+        _bank.Deposit(999m, new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
+        await StoreForAsync("jemand-anders", 999m, new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero));
         MonthlyReport report = await RequestAsync(2026, 9);
 
         ReportGeneration result = await GenerateAsync(report.Id);
@@ -121,6 +127,59 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
     }
 
     [Fact]
+    public async Task A_request_keeps_the_bookings_of_the_month_in_the_same_transaction()
+    {
+        _bank.Deposit(100m, new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero));
+        _bank.Deposit(999m, new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
+
+        await RequestAsync(2026, 9);
+
+        (DateTimeOffset from, DateTimeOffset to) = Assert.Single(_bank.Calls);
+        Assert.Equal(new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero), from);
+        Assert.Equal(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), to);
+        await using AnalyticsDbContext context = _postgres.CreateContext();
+        Assert.Equal(100m, (await context.OwnerBookings.SingleAsync()).Amount);
+    }
+
+    [Fact]
+    public async Task Without_consent_the_bank_is_not_asked_and_nothing_is_stored()
+    {
+        await Assert.ThrowsAsync<BankAccessDeniedException>(() =>
+            WithServiceAsync(service => service.RequestAsync(Owner, false, 2026, 9, "corr", CancellationToken.None)));
+
+        Assert.Empty(_bank.Calls);
+        await using AnalyticsDbContext context = _postgres.CreateContext();
+        Assert.Equal(0, await context.MonthlyReports.CountAsync());
+        Assert.Equal(0, await context.Outbox.CountAsync());
+    }
+
+    [Fact]
+    public async Task When_the_bank_is_down_nothing_is_requested()
+    {
+        _bank.Failure = new BankUnavailableException("weg", TimeSpan.FromSeconds(5));
+
+        await Assert.ThrowsAsync<BankUnavailableException>(() => RequestAsync(2026, 9));
+
+        await using AnalyticsDbContext context = _postgres.CreateContext();
+        Assert.Equal(0, await context.MonthlyReports.CountAsync());
+        Assert.Equal(0, await context.Outbox.CountAsync());
+    }
+
+    // Lehnt die Bank ab, ist die Zustimmung weg: was von diesem Kunden gespeichert war, auch.
+    [Fact]
+    public async Task A_refusal_of_the_bank_forgets_the_stored_bookings_of_the_customer()
+    {
+        await StoreForAsync(Owner, 10m, new DateTimeOffset(2026, 8, 3, 10, 0, 0, TimeSpan.Zero));
+        await StoreForAsync("jemand-anders", 20m, new DateTimeOffset(2026, 8, 3, 10, 0, 0, TimeSpan.Zero));
+        _bank.Failure = new BankAccessDeniedException("abgelehnt");
+
+        await Assert.ThrowsAsync<BankAccessDeniedException>(() => RequestAsync(2026, 9));
+
+        await using AnalyticsDbContext context = _postgres.CreateContext();
+        Assert.Equal(new[] { "jemand-anders" }, await context.OwnerBookings.Select(booking => booking.OwnerId).ToListAsync());
+    }
+
+    [Fact]
     public async Task An_unknown_report_is_reported_as_unknown()
     {
         Assert.Equal(ReportGeneration.Unknown, await GenerateAsync(Guid.NewGuid()));
@@ -152,7 +211,7 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
     {
         MonthlyReport older = await RequestAsync(2026, 8);
         MonthlyReport newer = await RequestAsync(2026, 9);
-        await WithServiceAsync(service => service.RequestAsync("jemand-anders", 2026, 9, "corr", CancellationToken.None));
+        await WithServiceAsync(service => service.RequestAsync("jemand-anders", true, 2026, 9, "corr", CancellationToken.None));
 
         IReadOnlyList<MonthlyReport> reports = await WithServiceAsync(service => service.ListOwnedAsync(Owner, CancellationToken.None));
 
@@ -172,6 +231,10 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
         services.AddLogging();
         services.AddAnalyticsCore(configuration);
 
+        // Die Bank ohne HTTP; die Tests der API prüfen den Weg über HTTP.
+        services.AddSingleton<InMemoryBank>();
+        services.AddSingleton<IBankBookings>(provider => provider.GetRequiredService<InMemoryBank>());
+
         // Was AddReportProcessing sonst registriert, ohne die Hintergrunddienste: die startet
         // ein Test selbst, mit dem Broker der Testklasse.
         services.AddSingleton(AsyncApiSchemas.FromEmbeddedContracts());
@@ -181,7 +244,7 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
 
     private Task<MonthlyReport> RequestAsync(int year, int month, string correlationId = "corr")
     {
-        return WithServiceAsync(service => service.RequestAsync(Owner, year, month, correlationId, CancellationToken.None));
+        return WithServiceAsync(service => service.RequestAsync(Owner, true, year, month, correlationId, CancellationToken.None));
     }
 
     private Task<ReportGeneration> GenerateAsync(Guid reportId)
@@ -195,11 +258,10 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
         return await action(scope.ServiceProvider.GetRequiredService<ReportService>());
     }
 
-    private async Task BookAsync(string owner, decimal amount, DateTimeOffset bookedAt)
+    private async Task StoreForAsync(string owner, decimal amount, DateTimeOffset bookedAt)
     {
-        await using AnalyticsDbContext context = _postgres.CreateContext();
-        await new Analytics.Application.Ledger.LedgerProjection(new TotalsStore(context)).ApplyAsync(
-            BookedTransaction.Of(Guid.NewGuid(), owner, TransactionKind.Deposit, amount, Currency.Of("CHF"), bookedAt),
-            CancellationToken.None);
+        using IServiceScope scope = _services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<IBookingStore>().TryRememberAsync(
+            owner, new[] { new BookingEntry(Guid.NewGuid(), "Deposit", amount, "CHF", bookedAt) }, CancellationToken.None);
     }
 }

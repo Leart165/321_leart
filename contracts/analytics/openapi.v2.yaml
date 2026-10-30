@@ -9,15 +9,23 @@ info:
     /v2/analytics/me/bookings, in dem jede einzelne Buchung eines Kunden steht, und den
     Monatsbericht als PDF unter /v2/analytics/me/reports.
 
-    Anders als Version 1 speichert der Dienst dafür jede Buchung, aber nur, was das
-    Partner-Ereignis der Bank enthält (contracts/partner/asyncapi.v1.yaml): Art, Betrag, Währung,
-    Zeitpunkt und transactionId. Buchungstext, Konto und Überweisung bekommt er nicht. Protokoll
-    und Summen entstehen in derselben Datenbanktransaktion; eine Buchung, die mehrfach ankommt,
-    steht einmal im Protokoll und zählt einmal in den Summen. Das Protokoll beginnt mit der
-    Einführung dieser Version; ältere Buchungen kennt der Dienst nur als Summe.
+    Woher die Buchungen kommen: der Dienst liest sie mit dem Token des Kunden beim Auszugsdienst
+    der Bank, GET /v2/statements/bookings (contracts/statements/openapi.v2.yaml, ab 2.1.0). Dafür
+    braucht das Token den Scope statements:read der Bank; Keycloak schreibt ihn nur nach der
+    Zustimmung des Kunden hinein. Die Analytics-Firma sieht so nur Kunden, die zugestimmt haben,
+    und nur, solange sie zustimmen. Sie bekommt nur Art, Betrag, Währung, Zeitpunkt und
+    transactionId, keinen Buchungstext und kein Konto. Einen Zugang zum Broker der Bank braucht sie
+    nicht.
+
+    Was die Bank liefert, speichert der Dienst, ohne Doppelte (transactionId). Ist die Bank nicht
+    zu erreichen, zeigen me/bookings und me/monthly diesen gespeicherten Stand und sagen das im Kopf
+    X-Data-Source. Fehlt die Zustimmung im Token oder lehnt die Bank ab, löscht der Dienst alles,
+    was er von diesem Kunden gespeichert hat, und antwortet 403 mit scope="statements:read".
 
     Anders als Version 1 beschreibt diese Version die Sicherheit als OAuth2-Schema keycloak mit
-    dem Scope analytics:read nach contracts/auth/scopes.md.
+    dem Scope analytics:read nach contracts/auth/scopes.md. Den Scope statements:read verlangt
+    die Bank, nicht dieser Dienst; er steht deshalb nicht an den Operationen, nur in ihrer
+    Beschreibung und in der Antwort Forbidden.
   contact:
     name: Leart Mena
 
@@ -49,6 +57,9 @@ paths:
         Zeitraum liegt, neueste zuerst. Tage in UTC. Ohne from und to die letzten 30 Tage bis
         heute; der Zeitraum umfasst höchstens 366 Tage. Höchstens limit Buchungen; wer mehr
         braucht, fragt einen kürzeren Zeitraum an.
+
+        Gelesen bei der Bank mit dem Token des Kunden, halboffen in UTC: from um 00:00Z bis zum Tag
+        nach to um 00:00Z. Braucht im Token zusätzlich statements:read.
       security:
         - keycloak: [analytics:read]
       parameters:
@@ -81,6 +92,9 @@ paths:
       responses:
         '200':
           description: Buchungen im Zeitraum, neueste zuerst, leer wenn es keine gibt
+          headers:
+            X-Data-Source:
+              $ref: '#/components/headers/DataSource'
           content:
             application/json:
               schema:
@@ -93,6 +107,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/BankUnavailable'
 
   /v2/analytics/me/reports:
     post:
@@ -103,8 +119,13 @@ paths:
         Beantragt den Monatsbericht eines Monats für den Inhaber aus dem sub-Claim. Der Dienst
         antwortet sofort mit 202; erzeugt wird das PDF danach über den eigenen Exchange
         analytics.events und die Queue analytics.reports (contracts/analytics/events.asyncapi.v1.yaml).
-        Den Fortschritt zeigt GET auf die Adresse im Kopf Location. Jeder Antrag ergibt einen
-        neuen Bericht mit dem Stand zum Zeitpunkt der Erzeugung. Ein Monat in der Zukunft ergibt 400.
+        Den Fortschritt zeigt GET auf die Adresse im Kopf Location. Ein Monat in der Zukunft ergibt 400.
+
+        Vor der Antwort liest der Dienst die Buchungen des Monats mit dem Token des Kunden bei der
+        Bank (braucht statements:read) und speichert sie mit dem Antrag und dem Ereignis in einer
+        Transaktion; das PDF entsteht aus genau diesen Buchungen. Ein Token geht nie in die Queue.
+        Ist die Bank nicht zu erreichen, gibt es keinen Antrag und die Antwort 503: ein Bericht
+        zeigt den ganzen Monat, nicht einen gespeicherten Teil.
       security:
         - keycloak: [analytics:read]
       parameters:
@@ -133,6 +154,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/BankUnavailable'
 
     get:
       tags: [reports]
@@ -224,6 +247,9 @@ paths:
       description: |
         Wie /v1/analytics/me/monthly: die Summen je Monat und Währung des angefragten Jahres für
         den Inhaber aus dem sub-Claim. Ein Monat ohne Buchung erscheint nicht in der Liste.
+        Gerechnet aus den Buchungen, die der Dienst mit dem Token des Kunden bei der Bank liest:
+        from = 1. Januar, to = 1. Januar des Folgejahres, Monate in UTC. Braucht im Token
+        zusätzlich statements:read.
       security:
         - keycloak: [analytics:read]
       parameters:
@@ -232,6 +258,9 @@ paths:
       responses:
         '200':
           description: Monatssummen des angefragten Jahres, leer wenn es keine Buchungen gibt
+          headers:
+            X-Data-Source:
+              $ref: '#/components/headers/DataSource'
           content:
             application/json:
               schema:
@@ -244,15 +273,20 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/BankUnavailable'
 
   /v2/analytics/system/daily:
     get:
       tags: [analytics]
       operationId: getSystemDaily
-      summary: Tagessummen der gesamten Bank
+      summary: Tagessummen über die Kunden mit Zustimmung
       description: |
-        Wie /v1/analytics/system/daily: die Tagessummen aller Inhaber im Zeitraum, beide Grenzen
-        eingeschlossen. Verlangt zusätzlich zum Scope die Realm-Rolle bank-admin.
+        Die Tagessummen im Zeitraum, beide Grenzen eingeschlossen, über die Buchungen, die Kunden
+        mit ihrer Zustimmung bei der Analytics-Firma gespeichert haben. Bankweite Zahlen gibt die
+        Bank keinem fremden Client, auch nicht einem Mitarbeiter mit bank-admin; das hier sind die
+        eigenen Daten der Analytics-Firma. Verlangt zusätzlich zum Scope die Realm-Rolle
+        bank-admin, die dieser Dienst selbst prüft.
       security:
         - keycloak: [analytics:read]
       parameters:
@@ -578,8 +612,11 @@ components:
     Forbidden:
       description: |
         Das Token ist gültig, trägt aber den Scope analytics:read nicht: der Kunde hat der
-        Analytics-Firma diesen Zugriff nicht erlaubt. Bei system/daily auch, wenn dem Benutzer die
-        Rolle bank-admin fehlt. Die Antwort hat keinen Körper.
+        Analytics-Firma diesen Zugriff nicht erlaubt. Bei Operationen, die bei der Bank lesen, auch
+        wenn statements:read im Token fehlt oder die Bank das Token ablehnt; dann nennt
+        WWW-Authenticate scope="statements:read", und nur eine neue Zustimmung bei der Bank hilft.
+        Bei system/daily auch, wenn dem Benutzer die Rolle bank-admin fehlt. Die Antwort hat keinen
+        Körper.
       headers:
         WWW-Authenticate:
           description: |
@@ -587,3 +624,27 @@ components:
             Scope. Fehlt nur die Rolle, steht er nicht in der Antwort.
           schema:
             type: string
+
+    BankUnavailable:
+      description: |
+        Die Bank ist nicht zu erreichen (keine Verbindung, Zeitlimit, 5xx oder offener Kreis), und
+        von diesem Kunden ist nichts gespeichert, das der Dienst zeigen könnte. Ein neuer Versuch
+        lohnt sich nach Retry-After.
+      headers:
+        Retry-After:
+          description: Sekunden bis zum nächsten sinnvollen Versuch
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+  headers:
+    DataSource:
+      description: |
+        live, wenn die Buchungen eben von der Bank kamen; stored, wenn die Bank nicht zu erreichen
+        war und das der zuletzt gespeicherte Stand ist.
+      schema:
+        type: string
+        enum: [live, stored]

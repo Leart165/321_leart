@@ -1,0 +1,9 @@
+# Prometheus der Analytics-Firma. Er fragt selbst niemanden ab: die Metriken von analytics-api,
+# des eigenen Brokers und aus den Spannen schicken Alloy und Tempo per remote write. Aufbewahrung
+# und der Empfang sind Startparameter, siehe Compose.
+
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs: []

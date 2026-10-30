@@ -3,43 +3,36 @@ using Xunit;
 
 namespace Analytics.Tests.Messaging;
 
-// Das eingebettete Schema aus contracts/partner entscheidet zur Laufzeit, ob eine Nachricht der
-// Bank verarbeitet wird.
+// Das eingebettete Schema aus contracts/analytics/events.asyncapi.v1.yaml entscheidet zur Laufzeit,
+// ob ein Antrag auf einen Monatsbericht verarbeitet wird.
 public sealed class AsyncApiSchemasTests
 {
     private static readonly AsyncApiSchemas Schemas = AsyncApiSchemas.FromEmbeddedContracts();
 
-    // Eine Buchung, wie die Bank sie einem Partner gibt: ohne Konto und Buchungstext.
-    public const string ValidPartnerBooking = """
+    private const string ValidRequest = """
         {
-          "transactionId": "5f0c2b1e-8d5e-4a55-9a53-2b7f0f1b1c11",
-          "ownerId": "kunde-1",
-          "kind": "Deposit",
-          "amount": 100.50,
-          "currency": "CHF",
-          "bookedAt": "2026-09-17T09:30:00Z"
+          "reportId": "5f0c2b1e-8d5e-4a55-9a53-2b7f0f1b1c11",
+          "year": 2026,
+          "month": 9,
+          "requestedAt": "2026-10-01T09:30:00Z"
         }
         """;
 
     [Fact]
-    public void A_partner_booking_as_the_bank_publishes_it_is_valid()
+    public void A_request_as_the_outbox_writes_it_is_valid()
     {
-        Assert.Empty(Schemas.Validate("PartnerTransactionCompleted", ValidPartnerBooking));
+        Assert.Empty(Schemas.Validate(ReportTopology.ReportRequestedType, ValidRequest));
     }
 
     [Theory]
-    [InlineData("\"ownerId\": \"kunde-1\",", "\"ownerId\": \"kunde-1\", \"accountId\": \"7d1f5c3a-1c2b-4e5f-8a9b-0c1d2e3f4a5b\",")]
-    [InlineData("\"ownerId\": \"kunde-1\",", "\"ownerId\": \"kunde-1\", \"description\": \"Lohn\",")]
-    [InlineData("\"ownerId\": \"kunde-1\",", "")]
-    [InlineData("\"Deposit\"", "\"Bonus\"")]
-    [InlineData("\"amount\": 100.50,", "")]
-    [InlineData("\"CHF\"", "\"chf\"")]
-    [InlineData("\"amount\": 100.50", "\"amount\": -1")]
-    public void A_partner_booking_that_breaks_the_contract_is_invalid(string original, string replacement)
+    [InlineData("\"5f0c2b1e-8d5e-4a55-9a53-2b7f0f1b1c11\"", "\"kein-guid\"")]
+    [InlineData("\"month\": 9,", "")]
+    [InlineData("\"month\": 9", "\"month\": 13")]
+    public void A_request_that_breaks_the_contract_is_invalid(string original, string replacement)
     {
-        string broken = ValidPartnerBooking.Replace(original, replacement, StringComparison.Ordinal);
+        string broken = ValidRequest.Replace(original, replacement, StringComparison.Ordinal);
 
-        Assert.NotEmpty(Schemas.Validate("PartnerTransactionCompleted", broken));
+        Assert.NotEmpty(Schemas.Validate(ReportTopology.ReportRequestedType, broken));
     }
 
     [Fact]

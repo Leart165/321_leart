@@ -1,13 +1,17 @@
 # Lokale Entwicklung: alles aus dem Quellcode gebaut. Das Gesamtsystem mit den Diensten der
 # Bank liegt im Shared-Repo m321-main.
 #
+# Die Analytics-Firma braucht die Bank nur für eines: die Buchungen ihrer Kunden, über HTTP am
+# Eingang der Bank. Der Broker hier ist der eigene, für die Monatsberichte. Läuft das Gesamtsystem
+# nicht, startet der Dienst trotzdem; er zeigt dann gespeicherte Buchungen oder antwortet 503.
+#
 #   docker compose up --build -d                              Auswertungsdienst allein
 #   docker compose up -d --scale analytics-api=3              drei Instanzen teilen sich die Queue
 #   docker compose --profile observability up --build -d      dazu Loki, Alloy, Tempo, Prometheus, Grafana
-#   docker compose up -d analyticsdb rabbitmq                 nur Infrastruktur, Dienst mit dotnet run
+#   docker compose up -d analyticsdb analytics-rabbitmq      nur Infrastruktur, Dienst mit dotnet run
 #
-# Das Profil observability liest die Konfiguration aus ../m321-main/observability; dafür muss
-# m321-main neben diesem Repo ausgecheckt sein.
+# Das Profil observability ist der eigene Stack der Analytics-Firma, Konfiguration in
+# ./observability, Grafana auf http://127.0.0.1:3001. Derselbe Stack läuft im Gesamtsystem.
 name: analytics
 
 services:
@@ -28,7 +32,8 @@ services:
       retries: 10
       start_period: 10s
 
-  rabbitmq:
+  # Der eigene Broker der Analytics-Firma: analytics.events, analytics.reports, analytics.dlx.
+  analytics-rabbitmq:
     image: rabbitmq:4-management
     hostname: analytics-rabbitmq
     environment:
@@ -54,11 +59,16 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       # ASPNETCORE_HTTP_PORTS setzt das Dockerfile: 8080 für die API, 8081 für /ready.
       ConnectionStrings__AnalyticsDb: "Host=analyticsdb;Port=5432;Database=analytics;Username=analytics;Password=analytics;Maximum Pool Size=20;Timeout=3;Command Timeout=10"
-      RabbitMq__Host: rabbitmq
+      RabbitMq__Host: analytics-rabbitmq
+      # Der Eingang der Bank, wenn das Gesamtsystem aus m321-main auf diesem Rechner läuft.
+      Bank__BaseUrl: "http://host.docker.internal:8080"
       Auth__Issuer: "https://auth.fischerfocus.com/realms/personal"
       Auth__Audience: "m321-analytics-api"
-      # Metriken und Traces an Alloy. Läuft das Profil observability nicht, gehen sie ins Leere.
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
+      # Metriken und Traces an den eigenen Alloy. Läuft das Profil observability nicht, gehen sie
+      # ins Leere.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://analytics-alloy:4317
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8082-8084:8080"
     # Länger als das Abfliessen (8 s) plus das Zu-Ende-Verarbeiten laufender Nachrichten.
@@ -66,22 +76,22 @@ services:
     depends_on:
       analyticsdb:
         condition: service_healthy
-      rabbitmq:
+      analytics-rabbitmq:
         condition: service_healthy
 
-  # --- Observability, gleiche Konfiguration wie bei der Bank ------------------------------
+  # --- Observability, der eigene Stack der Analytics-Firma ------------------------------------
+  # Gleich aufgebaut wie der der Bank, aber getrennt: eigene Konfiguration in ./observability,
+  # nur eigene Container, nur das eigene Grafana hat einen Port.
 
-  loki:
+  analytics-loki:
     image: grafana/loki:3.7.8
     profiles: ["observability"]
     command: ["-config.file=/etc/loki/loki.yaml"]
-    ports:
-      - "3100:3100"
     volumes:
-      - ../m321-main/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - ./observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
       - loki-data:/loki
 
-  alloy:
+  analytics-alloy:
     image: grafana/alloy:v1.19.2
     profiles: ["observability"]
     command:
@@ -91,30 +101,26 @@ services:
       - --storage.path=/var/lib/alloy/data
     environment:
       LOG_PROJECTS: "analytics"
-    ports:
-      - "12345:12345"
     volumes:
-      - ../m321-main/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - alloy-data:/var/lib/alloy/data
     depends_on:
-      - loki
-      - prometheus
-      - tempo
+      - analytics-loki
+      - analytics-prometheus
+      - analytics-tempo
 
-  tempo:
+  analytics-tempo:
     image: grafana/tempo:2.10.8
     profiles: ["observability"]
     command: ["-config.file=/etc/tempo/tempo.yaml"]
-    ports:
-      - "3200:3200"
     volumes:
-      - ../m321-main/observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo
     depends_on:
-      - prometheus
+      - analytics-prometheus
 
-  prometheus:
+  analytics-prometheus:
     image: prom/prometheus:v3.15.0
     profiles: ["observability"]
     command:
@@ -122,27 +128,26 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --web.enable-remote-write-receiver
-    ports:
-      - "9090:9090"
     volumes:
-      - ../m321-main/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
 
-  grafana:
+  analytics-grafana:
     image: grafana/grafana:13.2.2
     profiles: ["observability"]
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/analytics-metrics.json
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3001:3000"
     volumes:
-      - ../m321-main/observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ../m321-main/observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     depends_on:
-      - loki
+      - analytics-loki
 
 volumes:
   analyticsdb-data:

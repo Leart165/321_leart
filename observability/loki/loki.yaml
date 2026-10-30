@@ -1,0 +1,49 @@
+# Loki als einzelner Prozess mit Ablage im Dateisystem. Für ein System dieser Grösse reicht das,
+# ein Cluster mit Objektspeicher wäre hier nur Aufwand.
+#
+# Die Logs kommen vom eigenen Alloy, siehe ../alloy/config.alloy. Angezeigt werden sie im
+# eigenen Grafana.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: 2026-09-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Sieben Tage, dann löscht der Compactor. Sonst läuft die Platte des Servers nach ein paar
+  # Lasttests voll.
+  retention_period: 168h
+  # Trace-Id und Korrelations-Id kommen als strukturierte Metadaten, nicht als Labels: als Label
+  # wüchse der Index mit jeder einzelnen Anfrage.
+  allow_structured_metadata: true
+  volume_enabled: true
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false

@@ -6,7 +6,6 @@ namespace Analytics.Infrastructure.Messaging;
 
 public sealed class AsyncApiSchemas
 {
-    public const string PartnerResourceName = "partner.asyncapi.v1.yaml";
     public const string AnalyticsEventsResourceName = "analytics-events.asyncapi.v1.yaml";
 
     private readonly Dictionary<string, JsonSchema> _schemas;
@@ -16,24 +15,13 @@ public sealed class AsyncApiSchemas
         _schemas = schemas;
     }
 
-    // Der Vertrag der Bank für Partner und der eigene für analytics.events. Die Namen der Schemas
-    // überschneiden sich nicht: PartnerTransactionCompleted von der Bank, ReportRequested für den
-    // eigenen Antrag.
+    // Der eigene Vertrag für analytics.events. Nachrichten der Bank liest dieser Dienst nicht mehr.
     public static AsyncApiSchemas FromEmbeddedContracts()
     {
-        Dictionary<string, JsonSchema> schemas = new Dictionary<string, JsonSchema>(StringComparer.Ordinal);
-        foreach (string resource in new[] { PartnerResourceName, AnalyticsEventsResourceName })
-        {
-            using Stream stream = typeof(AsyncApiSchemas).Assembly.GetManifestResourceStream(resource)
-                ?? throw new InvalidOperationException($"Die eingebettete Ressource '{resource}' fehlt.");
+        using Stream stream = typeof(AsyncApiSchemas).Assembly.GetManifestResourceStream(AnalyticsEventsResourceName)
+            ?? throw new InvalidOperationException($"Die eingebettete Ressource '{AnalyticsEventsResourceName}' fehlt.");
 
-            foreach (KeyValuePair<string, JsonSchema> schema in Load(stream)._schemas)
-            {
-                schemas[schema.Key] = schema.Value;
-            }
-        }
-
-        return new AsyncApiSchemas(schemas);
+        return Load(stream);
     }
 
     public static AsyncApiSchemas Load(Stream asyncApiYaml)

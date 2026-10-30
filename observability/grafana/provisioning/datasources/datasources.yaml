@@ -1,0 +1,54 @@
+# Datenquellen, die das Grafana der Analytics-Firma beim Start selbst anlegt. Nur die eigenen:
+# Loki, Prometheus und Tempo der Analytics-Firma.
+
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://analytics-loki:3100
+    isDefault: true
+    editable: false
+    jsonData:
+      maxLines: 1000
+      # Die Trace-Id steht als strukturierte Metadaten an jeder Zeile. Daraus wird ein Link zum
+      # Trace in Tempo. Das doppelte $ verhindert, dass Grafana hier eine Umgebungsvariable einsetzt.
+      derivedFields:
+        - name: Trace
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+          urlDisplayLabel: Trace ansehen
+
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://analytics-prometheus:9090
+    editable: false
+    jsonData:
+      timeInterval: 10s
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://analytics-tempo:3200
+    editable: false
+    jsonData:
+      # Vom Trace zu den Logzeilen, die dieselbe Trace-Id tragen.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        customQuery: true
+        query: '{service="analytics-api"} | trace_id="$${__trace.traceId}"'
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki

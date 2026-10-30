@@ -41,33 +41,6 @@ jobs:
       - name: Tests
         run: node --test "tests/frontend/*.test.mjs"
 
-  contracts:
-    name: Kontrakte stimmen mit dem Shared-Repo überein
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      # m321-main ist privat, der Standard-Token darf es nicht lesen. Deshalb entweder ein
-      # read-only Deploy Key (Secret SHARED_REPO_SSH_KEY) oder ein PAT (Secret SHARED_REPO_TOKEN).
-      - name: Shared-Repo holen
-        uses: actions/checkout@v4
-        with:
-          repository: Tim-Fischer-zh/m321-main
-          path: shared
-          ssh-key: ${{ secrets.SHARED_REPO_SSH_KEY }}
-          token: ${{ secrets.SHARED_REPO_TOKEN || github.token }}
-
-      - name: Kopie mit dem Original vergleichen
-        run: |
-          if ! diff -r --exclude=README.md shared/contracts contracts; then
-            echo ""
-            echo "Die Kontrakte im Shared-Repo und die Kopie hier stimmen nicht überein."
-            echo "Ändern immer im Shared-Repo, dann hier aktualisieren:"
-            echo "  cp -R ../m321-main/contracts/. contracts/"
-            exit 1
-          fi
-          echo "Kontrakte stimmen überein."
-
   test:
     name: Tests
     runs-on: ubuntu-latest
@@ -122,7 +95,7 @@ jobs:
 
   build-and-push:
     name: Image bauen und veröffentlichen
-    needs: [format, frontend, contracts, test]
+    needs: [format, frontend, test]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 

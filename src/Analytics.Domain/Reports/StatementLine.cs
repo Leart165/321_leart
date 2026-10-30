@@ -2,7 +2,8 @@ using Analytics.Domain.Ledger;
 
 namespace Analytics.Domain.Reports;
 
-// Eine Zeile im Monatsbericht: genau eine Buchung, wie sie das Partner-Ereignis der Bank meldet.
+// Eine Zeile im Monatsbericht: genau eine Buchung, so wie die Bank sie liefert: ohne Buchungstext
+// und ohne Konto.
 public sealed record StatementLine(
     Guid TransactionId,
     TransactionKind Kind,
