@@ -7,10 +7,13 @@ namespace Analytics.Application.Reports;
 
 // Alle Vorgänge rund um Monatsberichte. Wie die Überweisung der Bank in zwei Schritten:
 //
-// RequestAsync läuft in der API. Sie prüft, legt den Bericht an und schreibt das Ereignis
-// report.requested in die Outbox, beides in einer Transaktion. Die API antwortet mit 202.
+// RequestAsync läuft in der API. Sie prüft, holt die Buchungen des Monats mit dem Token des Kunden
+// bei der Bank und speichert sie zusammen mit dem Bericht und dem Ereignis report.requested in der
+// Outbox, alles in einer Transaktion. Die API antwortet mit 202. Ein Token gehört nie in eine
+// Queue: der Konsument arbeitet nur mit dem, was hier gespeichert wurde.
 //
-// GenerateAsync läuft im Konsumenten der Queue analytics.reports. Sie erzeugt das PDF.
+// GenerateAsync läuft im Konsumenten der Queue analytics.reports. Sie erzeugt das PDF aus den
+// gespeicherten Buchungen.
 //
 // Nur durch diese Trennung nimmt die API weiter Anträge an, während das Erzeugen hängt, und nur
 // so teilen sich beide Instanzen die Arbeit.
@@ -22,6 +25,8 @@ public sealed class ReportService
     public const int ListLimit = 20;
 
     private readonly IMonthlyReportRepository _reports;
+    private readonly CustomerLedger _ledger;
+    private readonly IBookingStore _store;
     private readonly IBookingLogReader _bookings;
     private readonly IReportEvents _events;
     private readonly IStatementRenderer _renderer;
@@ -30,6 +35,8 @@ public sealed class ReportService
 
     public ReportService(
         IMonthlyReportRepository reports,
+        CustomerLedger ledger,
+        IBookingStore store,
         IBookingLogReader bookings,
         IReportEvents events,
         IStatementRenderer renderer,
@@ -37,6 +44,8 @@ public sealed class ReportService
         TimeProvider clock)
     {
         _reports = reports;
+        _ledger = ledger;
+        _store = store;
         _bookings = bookings;
         _events = events;
         _renderer = renderer;
@@ -44,15 +53,28 @@ public sealed class ReportService
         _clock = clock;
     }
 
+    // Ohne Zustimmung oder bei einer Absage der Bank wirft es BankAccessDeniedException, ist die
+    // Bank weg, BankUnavailableException. Einen gespeicherten Stand gibt es hier nicht: ein Bericht
+    // soll den ganzen Monat zeigen, nicht den zuletzt bekannten Teil.
     public async Task<MonthlyReport> RequestAsync(
         string ownerId,
+        bool consented,
         int year,
         int month,
         string correlationId,
         CancellationToken cancellationToken)
     {
-        MonthlyReport report = MonthlyReport.Request(ownerId, ReportPeriod.Of(year, month), _clock.GetUtcNow());
+        ReportPeriod period = ReportPeriod.Of(year, month);
+        MonthlyReport report = MonthlyReport.Request(ownerId, period, _clock.GetUtcNow());
 
+        IReadOnlyList<BookingEntry> bookings = await _ledger.FetchAsync(
+            ownerId,
+            consented,
+            UtcDays.StartOf(period.FirstDay),
+            UtcDays.StartOf(period.LastDay.AddDays(1)),
+            cancellationToken);
+
+        _store.Stage(ownerId, bookings);
         _reports.Add(report);
         _events.ReportRequested(report, correlationId);
         await _unitOfWork.SaveChangesAsync(cancellationToken);

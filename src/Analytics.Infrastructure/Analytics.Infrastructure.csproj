@@ -11,8 +11,13 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.12" />
     <PackageReference Include="NJsonSchema" Version="11.4.0" />
+    <PackageReference Include="NSwag.ApiDescription.Client" Version="14.7.1">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
@@ -23,8 +28,16 @@
 
   <ItemGroup>
     <!-- Im Assembly, damit der Dienst im Betrieb gegen genau das Schema prüft, gegen das er gebaut wurde. -->
-    <EmbeddedResource Include="../../contracts/partner/asyncapi.v1.yaml" LogicalName="partner.asyncapi.v1.yaml" />
     <EmbeddedResource Include="../../contracts/analytics/events.asyncapi.v1.yaml" LogicalName="analytics-events.asyncapi.v1.yaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Der Client zum Auszugsdienst der Bank entsteht bei jedem Build aus ihrem Kontrakt. Ändert
+         die Bank den Kontrakt, kompiliert dieser Dienst nicht mehr, statt zur Laufzeit ins Leere
+         zu greifen. Die erzeugte Datei liegt unter obj/ und gehört dem Build, nicht dem Repository.
+         /UseBaseUrl:false, damit der Konstruktor nur einen HttpClient nimmt und AddHttpClient ihn
+         auflösen kann. -->
+    <OpenApiReference Include="../../contracts/statements/openapi.v2.yaml" ClassName="StatementsApiClient" Namespace="Analytics.Infrastructure.Bank.Generated" Options="/JsonLibrary:SystemTextJson /UseBaseUrl:false /ParameterDateTimeFormat:o" />
   </ItemGroup>
 
   <PropertyGroup>

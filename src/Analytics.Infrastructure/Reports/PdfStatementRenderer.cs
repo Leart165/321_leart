@@ -177,7 +177,7 @@ public sealed class PdfStatementRenderer : IStatementRenderer
     private static void WriteFooter(PdfCanvas page, MonthlyStatement statement, int number, int count)
     {
         page.Line(Left, 42, Right, 42, 0.5, 0);
-        page.Text(Left, 30, PdfFont.Regular, Small, $"Analytics-Firma, Monatsbericht {statement.Period}, nur Buchungen aus dem Partner-Ereignis der Bank");
+        page.Text(Left, 30, PdfFont.Regular, Small, $"Analytics-Firma, Monatsbericht {statement.Period}, Buchungen von der Bank, mit Zustimmung des Kunden");
         page.Text(Right - 50, 30, PdfFont.Regular, Small, $"Seite {number} von {count}");
     }
 

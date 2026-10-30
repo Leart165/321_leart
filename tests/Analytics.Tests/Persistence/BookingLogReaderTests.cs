@@ -1,11 +1,13 @@
 using Analytics.Application.Ledger;
-using Analytics.Domain.Ledger;
 using Analytics.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Analytics.Tests.Persistence;
 
-// Das Buchungsprotokoll entsteht beim Zählen, in derselben Transaktion wie die Summen.
+// Was die Bank zu einem Kunden geliefert hat: gespeichert ohne Doppelte, gelesen je Kunde und
+// Zeitraum, gelöscht, sobald die Zustimmung fehlt.
 public sealed class BookingLogReaderTests : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private readonly PostgresFixture _postgres;
@@ -26,29 +28,26 @@ public sealed class BookingLogReaderTests : IClassFixture<PostgresFixture>, IAsy
     }
 
     [Fact]
-    public async Task Every_counted_booking_is_listed_newest_first()
+    public async Task Every_stored_booking_is_listed_newest_first()
     {
-        await ApplyAsync(Booking("kunde-1", TransactionKind.Deposit, 5400m, "2026-09-25T08:00:00Z"));
-        await ApplyAsync(Booking("kunde-1", TransactionKind.Withdrawal, 42.50m, "2026-09-26T12:15:00Z"));
-        await ApplyAsync(Booking("kunde-1", TransactionKind.TransferOut, 1850m, "2026-09-01T09:00:00Z"));
+        await RememberAsync("kunde-1", Booking("Deposit", 5400m, "2026-09-25T08:00:00Z"));
+        await RememberAsync("kunde-1", Booking("Withdrawal", 42.50m, "2026-09-26T12:15:00Z"));
+        await RememberAsync("kunde-1", Booking("TransferOut", 1850m, "2026-09-01T09:00:00Z"));
 
         IReadOnlyList<BookingEntry> log = await ReadAsync("kunde-1", "2026-09-01", "2026-09-30");
 
-        Assert.Collection(
-            log,
-            first => Assert.Equal((TransactionKind.Withdrawal.ToString(), 42.50m), (first.Kind, first.Amount)),
-            second => Assert.Equal((TransactionKind.Deposit.ToString(), 5400m), (second.Kind, second.Amount)),
-            third => Assert.Equal((TransactionKind.TransferOut.ToString(), 1850m), (third.Kind, third.Amount)));
+        Assert.Equal(new[] { "Withdrawal", "Deposit", "TransferOut" }, log.Select(entry => entry.Kind));
         Assert.All(log, entry => Assert.Equal("CHF", entry.Currency));
     }
 
+    // Dieselbe Antwort der Bank zweimal, auch aus zwei Instanzen zugleich: einmal gespeichert.
     [Fact]
-    public async Task A_booking_delivered_twice_is_listed_once()
+    public async Task A_booking_delivered_twice_is_stored_once()
     {
-        BookedTransaction booking = Booking("kunde-1", TransactionKind.Deposit, 100m, "2026-09-17T09:30:00Z");
+        BookingEntry booking = Booking("Deposit", 100m, "2026-09-17T09:30:00Z");
 
-        await ApplyAsync(booking);
-        await ApplyAsync(booking);
+        await Task.WhenAll(RememberAsync("kunde-1", booking), RememberAsync("kunde-1", booking));
+        await RememberAsync("kunde-1", booking);
 
         Assert.Single(await ReadAsync("kunde-1", "2026-09-01", "2026-09-30"));
     }
@@ -56,11 +55,11 @@ public sealed class BookingLogReaderTests : IClassFixture<PostgresFixture>, IAsy
     [Fact]
     public async Task Only_the_own_bookings_inside_the_range_are_listed()
     {
-        await ApplyAsync(Booking("kunde-1", TransactionKind.Deposit, 1m, "2026-08-31T23:59:59Z"));
-        await ApplyAsync(Booking("kunde-1", TransactionKind.Deposit, 2m, "2026-09-01T00:00:00Z"));
-        await ApplyAsync(Booking("kunde-1", TransactionKind.Deposit, 3m, "2026-09-30T23:30:00Z"));
-        await ApplyAsync(Booking("kunde-1", TransactionKind.Deposit, 4m, "2026-10-01T00:00:00Z"));
-        await ApplyAsync(Booking("kunde-2", TransactionKind.Deposit, 99m, "2026-09-15T10:00:00Z"));
+        await RememberAsync("kunde-1", Booking("Deposit", 1m, "2026-08-31T23:59:59Z"));
+        await RememberAsync("kunde-1", Booking("Deposit", 2m, "2026-09-01T00:00:00Z"));
+        await RememberAsync("kunde-1", Booking("Deposit", 3m, "2026-09-30T23:30:00Z"));
+        await RememberAsync("kunde-1", Booking("Deposit", 4m, "2026-10-01T00:00:00Z"));
+        await RememberAsync("kunde-2", Booking("Deposit", 99m, "2026-09-15T10:00:00Z"));
 
         IReadOnlyList<BookingEntry> log = await ReadAsync("kunde-1", "2026-09-01", "2026-09-30");
 
@@ -72,7 +71,7 @@ public sealed class BookingLogReaderTests : IClassFixture<PostgresFixture>, IAsy
     {
         for (int day = 1; day <= 5; day++)
         {
-            await ApplyAsync(Booking("kunde-1", TransactionKind.Deposit, day, $"2026-09-{day:00}T10:00:00Z"));
+            await RememberAsync("kunde-1", Booking("Deposit", day, $"2026-09-{day:00}T10:00:00Z"));
         }
 
         await using AnalyticsDbContext context = _postgres.CreateContext();
@@ -82,10 +81,29 @@ public sealed class BookingLogReaderTests : IClassFixture<PostgresFixture>, IAsy
         Assert.Equal(new[] { 5m, 4m }, log.Select(entry => entry.Amount));
     }
 
-    private async Task ApplyAsync(BookedTransaction transaction)
+    [Fact]
+    public async Task Forgetting_a_customer_removes_only_their_bookings()
+    {
+        await RememberAsync("kunde-1", Booking("Deposit", 1m, "2026-09-10T10:00:00Z"));
+        await RememberAsync("kunde-2", Booking("Deposit", 2m, "2026-09-10T10:00:00Z"));
+
+        await using (AnalyticsDbContext context = _postgres.CreateContext())
+        {
+            BookingStore store = new BookingStore(context, NullLogger<BookingStore>.Instance);
+            Assert.True(await store.TryForgetAsync("kunde-1", CancellationToken.None));
+            Assert.False(await store.KnowsAsync("kunde-1", CancellationToken.None));
+            Assert.True(await store.KnowsAsync("kunde-2", CancellationToken.None));
+        }
+
+        await using AnalyticsDbContext check = _postgres.CreateContext();
+        Assert.Equal(1, await check.OwnerBookings.CountAsync());
+    }
+
+    private async Task RememberAsync(string owner, BookingEntry booking)
     {
         await using AnalyticsDbContext context = _postgres.CreateContext();
-        await new LedgerProjection(new TotalsStore(context)).ApplyAsync(transaction, CancellationToken.None);
+        Assert.True(await new BookingStore(context, NullLogger<BookingStore>.Instance)
+            .TryRememberAsync(owner, new[] { booking }, CancellationToken.None));
     }
 
     private async Task<IReadOnlyList<BookingEntry>> ReadAsync(string owner, string from, string to)
@@ -95,8 +113,8 @@ public sealed class BookingLogReaderTests : IClassFixture<PostgresFixture>, IAsy
             owner, DateOnly.Parse(from), DateOnly.Parse(to), 500, CancellationToken.None);
     }
 
-    private static BookedTransaction Booking(string owner, TransactionKind kind, decimal amount, string bookedAt)
+    private static BookingEntry Booking(string kind, decimal amount, string bookedAt)
     {
-        return BookedTransaction.Of(Guid.NewGuid(), owner, kind, amount, Currency.Of("CHF"), DateTimeOffset.Parse(bookedAt));
+        return new BookingEntry(Guid.NewGuid(), kind, amount, "CHF", DateTimeOffset.Parse(bookedAt));
     }
 }

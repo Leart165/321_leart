@@ -6,7 +6,8 @@ using Xunit;
 namespace Analytics.Tests.Api;
 
 // Die eigene Datenbank antwortet nicht. Das ist kein Fehler des Aufrufers und keiner im Code:
-// 503 mit Retry-After statt 500, und /health meldet den Dienst als nicht bereit.
+// 503 mit Retry-After statt 500, und /health meldet den Dienst als nicht bereit. Was von der Bank
+// kommt, geht trotzdem: das Speichern ist nur ein Vorrat.
 public sealed class DatabaseOutageTests : IDisposable
 {
     private const string Unreachable = "Host=127.0.0.1;Port=1;Database=analytics;Username=analytics;Password=analytics;Timeout=1";
@@ -31,7 +32,7 @@ public sealed class DatabaseOutageTests : IDisposable
         HttpClient client = _api.ClientWith(_tokens.Customer());
         client.DefaultRequestHeaders.Add("X-Correlation-Id", "ausfall-1");
 
-        HttpResponseMessage response = await client.GetAsync("/v1/analytics/me/monthly?year=2026");
+        HttpResponseMessage response = await client.GetAsync("/v2/analytics/me/reports");
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(TimeSpan.FromSeconds(2), response.Headers.RetryAfter?.Delta);
@@ -39,6 +40,19 @@ public sealed class DatabaseOutageTests : IDisposable
 
         JsonElement problem = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("ausfall-1", problem.GetProperty("correlationId").GetString());
+    }
+
+    [Fact]
+    public async Task The_monthly_totals_still_come_live_from_the_bank()
+    {
+        _api.Bank.Book(TestTokenIssuer.Subject, "Deposit", 80m, DateTimeOffset.Parse("2026-09-17T09:30:00Z"));
+
+        HttpResponseMessage response = await _api.ClientWith(_tokens.Customer()).GetAsync("/v1/analytics/me/monthly?year=2026");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("live", Assert.Single(response.Headers.GetValues("X-Data-Source")));
+        JsonElement month = Assert.Single(await response.Content.ReadFromJsonAsync<JsonElement[]>() ?? Array.Empty<JsonElement>());
+        Assert.Equal(80m, month.GetProperty("income").GetDecimal());
     }
 
     [Fact]

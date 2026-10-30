@@ -23,7 +23,7 @@ export function createBookingsView({ api, range, onUnauthorized, onReconsent }) 
     h("div", { class: "view__head" },
       h("div", {},
         h("h1", {}, "Buchungen"),
-        h("p", { class: "lead" }, "Jede Buchung, die deine Bank uns gemeldet hat, einzeln und neueste zuerst.")),
+        h("p", { class: "lead" }, "Jede Buchung, die wir mit deiner Erlaubnis bei deiner Bank lesen, einzeln und neueste zuerst.")),
       controls),
     body,
     reports.element);
@@ -90,7 +90,7 @@ export function createBookingsView({ api, range, onUnauthorized, onReconsent }) 
 
     if (state.bookings.length === 0) {
       replace(body, card("Protokoll", period,
-        empty("Keine Buchungen in diesem Zeitraum", "Sobald deine Bank eine Buchung meldet, erscheint sie hier innert Sekunden.")));
+        empty("Keine Buchungen in diesem Zeitraum", "Sobald du bei deiner Bank buchst, erscheint die Buchung hier.")));
       return;
     }
 

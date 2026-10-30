@@ -8,9 +8,9 @@ using Xunit;
 namespace Analytics.Tests.Messaging;
 
 // Ein echter RabbitMQ, aber ein eigener virtueller Host je Testklasse: nichts, was hier passiert,
-// berührt die Queues der Entwicklungsumgebung. Die Bank-Seite (bank.events, bank.dlx) legt die
-// Fixture als Administrator an, der Dienst selbst läuft als eingeschränkter Benutzer mit genau den
-// Rechten aus rabbitmq/partner-access.sh in m321-main.
+// berührt die Queues der Entwicklungsumgebung. Es ist der eigene Broker der Analytics-Firma: der
+// Dienst läuft als eigener Benutzer mit allen Rechten in seinem virtuellen Host. Die Bank hat hier
+// nichts; ihre Buchungen kommen über HTTP.
 public sealed class BrokerFixture : IAsyncLifetime
 {
     private static readonly string Host = Environment.GetEnvironmentVariable("ANALYTICS_TEST_RABBITMQ_HOST") ?? "localhost";
@@ -23,9 +23,9 @@ public sealed class BrokerFixture : IAsyncLifetime
 
     public string VirtualHost { get; } = "analytics-test-" + Guid.NewGuid().ToString("N");
 
-    public string PartnerUser { get; } = "analytics-test-" + Guid.NewGuid().ToString("N")[..8];
+    public string ServiceUser { get; } = "analytics-test-" + Guid.NewGuid().ToString("N")[..8];
 
-    public string PartnerPassword { get; } = "analytics-test";
+    public string ServicePassword { get; } = "analytics-test";
 
     public string BrokerHost
     {
@@ -42,32 +42,33 @@ public sealed class BrokerFixture : IAsyncLifetime
         await PutAsync($"api/vhosts/{vhost}", new { });
         await PutAsync($"api/permissions/{vhost}/{AdminUser}", new { configure = ".*", write = ".*", read = ".*" });
 
-        // Die Bank-Seite zuerst: eine Topic-Berechtigung verlangt einen bestehenden Exchange.
-        await using (IConnection admin = await ConnectWhenReadyAsync())
-        await using (IChannel channel = await admin.CreateChannelAsync())
-        {
-            await channel.ExchangeDeclareAsync("bank.events", ExchangeType.Topic, durable: true, autoDelete: false);
-            await channel.ExchangeDeclareAsync("bank.dlx", ExchangeType.Direct, durable: true, autoDelete: false);
-        }
+        // Erst weiter, wenn der Broker AMQP annimmt.
+        IConnection ready = await ConnectWhenReadyAsync();
+        await ready.DisposeAsync();
 
-        await PutAsync($"api/users/{PartnerUser}", new { password = PartnerPassword, tags = "" });
-        await PutAsync($"api/permissions/{vhost}/{PartnerUser}", new
-        {
-            configure = "^analytics\\..*",
-            write = "^analytics\\..*",
-            read = "^analytics\\..*|^bank\\.events$"
-        });
-        await GrantTopicPermissionAsync();
+        await PutAsync($"api/users/{ServiceUser}", new { password = ServicePassword, tags = "" });
+        await GrantServiceUserAsync();
     }
 
-    // Eine Topic-Berechtigung hängt am Exchange; wird bank.events neu angelegt, braucht es sie neu.
-    public Task GrantTopicPermissionAsync()
+    public Task GrantServiceUserAsync()
     {
-        return PutAsync($"api/topic-permissions/{Uri.EscapeDataString(VirtualHost)}/{PartnerUser}", new
+        return PutAsync($"api/permissions/{Uri.EscapeDataString(VirtualHost)}/{ServiceUser}", new
         {
-            exchange = "bank.events",
+            configure = ".*",
+            write = ".*",
+            read = ".*"
+        });
+    }
+
+    // Der Benutzer darf weiter verbinden, aber nichts mehr anlegen, schreiben oder lesen: so
+    // scheitert jeder Start des Konsumenten, bis GrantServiceUserAsync die Rechte zurückgibt.
+    public Task RevokeServiceUserAsync()
+    {
+        return PutAsync($"api/permissions/{Uri.EscapeDataString(VirtualHost)}/{ServiceUser}", new
+        {
+            configure = "^$",
             write = "^$",
-            read = "^partner\\..+$"
+            read = "^$"
         });
     }
 
@@ -99,15 +100,15 @@ public sealed class BrokerFixture : IAsyncLifetime
         return Factory(AdminUser, AdminPassword).CreateConnectionAsync();
     }
 
-    public Task<IConnection> ConnectAsPartnerAsync()
+    public Task<IConnection> ConnectAsServiceAsync()
     {
-        return Factory(PartnerUser, PartnerPassword).CreateConnectionAsync();
+        return Factory(ServiceUser, ServicePassword).CreateConnectionAsync();
     }
 
     public async Task DisposeAsync()
     {
         await _management.DeleteAsync($"api/vhosts/{Uri.EscapeDataString(VirtualHost)}");
-        await _management.DeleteAsync($"api/users/{PartnerUser}");
+        await _management.DeleteAsync($"api/users/{ServiceUser}");
         _management.Dispose();
     }
 

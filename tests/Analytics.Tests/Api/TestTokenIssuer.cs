@@ -123,8 +123,9 @@ public sealed record TokenSpec
 
     public string? TokenType { get; init; } = JwtAuthentication.AccessTokenType;
 
-    // Wie Keycloak ihn für analytics-web ausstellt: durch Leerzeichen getrennt.
-    public string? Scope { get; init; } = "openid profile analytics:read";
+    // Wie Keycloak ihn für analytics-web ausstellt, nachdem der Kunde beidem zugestimmt hat: durch
+    // Leerzeichen getrennt, statements:read für das Lesen der Buchungen bei der Bank.
+    public string? Scope { get; init; } = "openid profile analytics:read statements:read";
 
     public IReadOnlyList<string> Roles { get; init; } = Array.Empty<string>();
 

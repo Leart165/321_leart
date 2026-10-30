@@ -1,6 +1,3 @@
-using Analytics.Application.Ledger;
-using Analytics.Domain.Ledger;
-using Analytics.Infrastructure.Persistence;
 using Analytics.Tests.Persistence;
 using Microsoft.IdentityModel.Tokens;
 using System.Net;
@@ -152,13 +149,10 @@ public sealed class AccessTests : IClassFixture<PostgresFixture>, IDisposable
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    private async Task BookAsync(string owner, decimal amount)
+    private Task BookAsync(string owner, decimal amount)
     {
-        await using AnalyticsDbContext context = _postgres.CreateContext();
-        await new LedgerProjection(new TotalsStore(context)).ApplyAsync(
-            BookedTransaction.Of(Guid.NewGuid(), owner, TransactionKind.Deposit, amount, Currency.Of("CHF"),
-                DateTimeOffset.Parse("2026-09-17T09:30:00Z")),
-            CancellationToken.None);
+        _api.Bank.Book(owner, "Deposit", amount, DateTimeOffset.Parse("2026-09-17T09:30:00Z"));
+        return Task.CompletedTask;
     }
 
     public static TheoryData<string, TokenSpec> RejectedTokens()

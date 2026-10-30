@@ -2,10 +2,10 @@ using RabbitMQ.Client;
 
 namespace Analytics.Infrastructure.Messaging;
 
-// Der eigene Exchange der Analytics-Firma, aufgebaut wie bank.events: ein Topic-Exchange für die
-// eigenen Ereignisse, je Queue eine Dead-Letter-Queue über den Dead-Letter-Exchange analytics.dlx.
-// Der Broker-Benutzer analytics darf alles mit dem Präfix analytics. anlegen und beschreiben.
-// Kontrakt: contracts/analytics/events.asyncapi.v1.yaml.
+// Der eigene Exchange der Analytics-Firma am eigenen Broker analytics-rabbitmq, aufgebaut wie
+// bank.events bei der Bank: ein Topic-Exchange für die eigenen Ereignisse, je Queue eine
+// Dead-Letter-Queue über den Dead-Letter-Exchange analytics.dlx. Alle Namen beginnen mit
+// analytics. Kontrakt: contracts/analytics/events.asyncapi.v1.yaml.
 public static class ReportTopology
 {
     public const string Exchange = "analytics.events";

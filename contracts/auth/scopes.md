@@ -24,7 +24,7 @@ Scope bringt die Audience seiner API mit: ein Token enthält nur die Dienste, f�
 | `accounts:read` | Eigene Konten, Salden und Aufträge lesen | `m321-accounts-api` | `GET /v2/accounts`, `GET /v2/accounts/{id}`, `GET /v2/transfers/{id}`; `GET /v2/admin/transfers/failed` zusätzlich nur mit Rolle `bank-admin` |
 | `accounts:write` | Konto eröffnen, einzahlen, abheben | `m321-accounts-api` | `POST /v2/accounts`, `POST /v2/accounts/{id}/deposits`, `POST /v2/accounts/{id}/withdrawals` |
 | `transfers:write` | Überweisungen von eigenen Konten beauftragen | `m321-accounts-api` | `POST /v2/transfers` |
-| `statements:read` | Kontoauszüge eigener Konten lesen | `m321-statements-api` | `GET /v2/statements/{id}` |
+| `statements:read` | Kontoauszüge eigener Konten lesen | `m321-statements-api` | `GET /v2/statements/{id}`, `GET /v2/statements/bookings` (Buchungen aller eigenen Konten, ohne Buchungstext und Konto) |
 | `analytics:read` | Eigene Summen und Buchungen bei der Analytics-Firma lesen | `m321-analytics-api` | `GET /v1/analytics/me/monthly`, `GET /v2/analytics/me/monthly`, `GET /v2/analytics/me/bookings`, `POST /v2/analytics/me/reports`, `GET /v2/analytics/me/reports`, `GET /v2/analytics/me/reports/{reportId}`, `GET /v2/analytics/me/reports/{reportId}/document`; `GET /v1/analytics/system/daily` und `GET /v2/analytics/system/daily` zusätzlich nur mit Rolle `bank-admin` |
 
 Version 1 der Bank-APIs verlangt kein Token und kennt deshalb keine Scopes. Sie ist abgelöst.
@@ -51,7 +51,7 @@ diesen Scope verlangt.
 | `m321-web` | Bank, Frontend unter `/` | `accounts:read`, `accounts:write`, `transfers:write`, `statements:read` | nein, es ist die Bank selbst |
 | `m321-accounts-api` | Bank, Werkzeuge wie `tools/token/token.sh` | alle | nein |
 | `m321-loadtest` | Bank, Lastwerkzeug `tools/stress/stress.py` | `accounts:read`, `accounts:write`, `transfers:write`, `statements:read` | nein; vertraulicher Client mit Client Credentials, die Konten gehören seinem Service Account |
-| `analytics-web` | Analytics-Firma, "Sign in with Bank" | `analytics:read`; auf Wunsch `statements:read` | ja, Keycloak fragt den Kunden bei der ersten Anmeldung |
+| `analytics-web` | Analytics-Firma, "Sign in with Bank" | `analytics:read`; auf Wunsch `statements:read`, damit ihr Dienst mit dem Token des Kunden `GET /v2/statements/bookings` aufrufen darf | ja, Keycloak fragt den Kunden bei der ersten Anmeldung |
 
 Alle Clients im Browser sind öffentlich, ohne Geheimnis, mit Authorization Code und PKCE (S256). Der
 einzige vertrauliche Client ist `m321-loadtest`; sein Secret liegt nur in Keycloak und in der
@@ -60,3 +60,15 @@ Umgebung dessen, der den Lasttest startet.
 Was ein Kunde einer fremden Firma erlaubt hat, sieht er im Frontend der Bank unter "Verbundene
 Dienste" und kann es dort wieder entziehen. Die Zustimmungen verwaltet Keycloak; die Bank liest
 sie über dessen Account-API.
+
+## Delegierter Zugriff einer fremden Firma
+
+Die Analytics-Firma liest die Buchungen eines Kunden über HTTP, mit dessen Token und nur mit
+seiner Zustimmung. Ihr Dienst nimmt das Token entgegen, das die Statistikseite bei "Sign in with
+Bank" bekommen hat, prüft es für die eigene Audience `m321-analytics-api` und reicht es unverändert
+an `GET /v2/statements/bookings` weiter. Der Auszugsdienst prüft es noch einmal, für seine Audience
+`m321-statements-api` und den Scope `statements:read`; beides steht nur im Token, wenn der Kunde
+zugestimmt hat. Den Inhaber nimmt er aus `sub`. Die Analytics-Firma sieht so nur Buchungen von
+Kunden, die es erlaubt haben, und nur, solange sie es erlauben.
+
+Dafür braucht sie weder Zugang zum Broker der Bank noch einen Client mit eigenem Geheimnis.

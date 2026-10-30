@@ -4,70 +4,52 @@ using Xunit;
 
 namespace Analytics.Tests.Contracts;
 
-// Die Namen am Broker müssen genau die aus den Kontrakten sein. Sonst bindet sich der Dienst an
-// etwas, das die Bank nicht kennt.
+// Die Namen am eigenen Broker müssen genau die aus contracts/analytics/events.asyncapi.v1.yaml sein.
 public sealed class MessagingContractTests
 {
-    private static JsonElement Operation(string contract, string operation)
-    {
-        using JsonDocument document = ContractFile.Load(contract);
-        return document.RootElement.GetProperty("operations").GetProperty(operation).Clone();
-    }
+    private const string Contract = "analytics/events.asyncapi.v1.yaml";
 
-    private static JsonElement Channel(string contract, string channel)
+    private static JsonElement Channel(string channel)
     {
-        using JsonDocument document = ContractFile.Load(contract);
+        using JsonDocument document = ContractFile.Load(Contract);
         return document.RootElement.GetProperty("channels").GetProperty(channel).Clone();
     }
 
-    private static string ExchangeOf(JsonElement channel)
-    {
-        return channel.GetProperty("bindings").GetProperty("amqp").GetProperty("exchange").GetProperty("name").GetString()!;
-    }
-
     [Fact]
-    public void Version2_binds_the_partner_queue_as_the_code_does()
+    public void The_report_request_goes_to_the_exchange_and_queue_of_the_contract()
     {
-        JsonElement queue = Operation("analytics/asyncapi.v2.yaml", "consumePartnerTransactionCompleted").GetProperty("x-queue");
-        JsonElement channel = Channel("analytics/asyncapi.v2.yaml", "partnerTransactionCompleted");
+        JsonElement published = Channel("reportRequested");
+        JsonElement queue = Channel("reportsQueue");
 
-        Assert.Equal(MessagingTopology.PartnerQueue, queue.GetProperty("name").GetString());
-        Assert.Equal(MessagingTopology.PartnerDeadLetterQueue, queue.GetProperty("deadLetterQueue").GetString());
-        Assert.Equal(MessagingTopology.DeadLetterExchange, queue.GetProperty("deadLetterExchange").GetString());
-        Assert.Equal(new MessagingOptions().Prefetch.ToString(), queue.GetProperty("prefetch").ToString());
-        Assert.Equal(new MessagingOptions().ClientName, queue.GetProperty("consumer").GetString());
-        Assert.Equal(MessagingTopology.PartnerRoutingKey, channel.GetProperty("address").GetString());
-        Assert.Equal(MessagingTopology.Exchange, ExchangeOf(channel));
+        Assert.Equal(ReportTopology.ReportRequestedRoutingKey, published.GetProperty("address").GetString());
+        Assert.Equal(ReportTopology.Exchange,
+            published.GetProperty("bindings").GetProperty("amqp").GetProperty("exchange").GetProperty("name").GetString());
+        Assert.Equal(ReportTopology.ReportsQueue, queue.GetProperty("address").GetString());
+        Assert.Equal(MessagingTopology.DeadLetterExchange, queue.GetProperty("x-deadLetterExchange").GetString());
+        Assert.Equal(ReportTopology.ReportsDeadLetterQueue, queue.GetProperty("x-deadLetterQueue").GetString());
     }
 
-    [Fact]
-    public void The_bank_publishes_the_partner_event_where_the_queue_listens()
-    {
-        JsonElement channel = Channel("partner/asyncapi.v1.yaml", "partnerTransactionCompleted");
-
-        Assert.Equal(MessagingTopology.PartnerRoutingKey, channel.GetProperty("address").GetString());
-        Assert.Equal(MessagingTopology.Exchange, ExchangeOf(channel));
-    }
-
-    // Der Broker-Benutzer analytics darf nur analytics.* anlegen und beschreiben.
     [Fact]
     public void Everything_this_service_creates_starts_with_analytics()
     {
         string[] created =
         {
-            MessagingTopology.PartnerQueue,
-            MessagingTopology.PartnerDeadLetterQueue,
+            ReportTopology.Exchange,
+            ReportTopology.ReportsQueue,
+            ReportTopology.ReportsDeadLetterQueue,
             MessagingTopology.DeadLetterExchange
         };
 
         Assert.All(created, name => Assert.StartsWith("analytics.", name, StringComparison.Ordinal));
     }
 
-    [Theory]
-    [InlineData("PartnerTransactionCompleted")]
-    [InlineData("ReportRequested")]
-    public void The_embedded_schemas_know_every_event_this_service_reads(string messageType)
+    // Nachrichten der Bank liest der Dienst nicht mehr; ihr Schema ist nicht mehr eingebettet.
+    [Fact]
+    public void The_embedded_schemas_know_only_the_own_event()
     {
-        Assert.True(AsyncApiSchemas.FromEmbeddedContracts().Knows(messageType));
+        AsyncApiSchemas schemas = AsyncApiSchemas.FromEmbeddedContracts();
+
+        Assert.True(schemas.Knows(ReportTopology.ReportRequestedType));
+        Assert.False(schemas.Knows("PartnerTransactionCompleted"));
     }
 }

@@ -1,10 +1,12 @@
 using Analytics.Api.Authentication;
+using Analytics.Api.Bank;
 using Analytics.Api.Frontend;
 using Analytics.Api.Hosting;
 using Analytics.Api.Middleware;
 using Analytics.Api.Observability;
 using Analytics.Api.OpenApi;
 using Analytics.Infrastructure;
+using Analytics.Infrastructure.Bank;
 using Analytics.Infrastructure.Observability;
 using Analytics.Infrastructure.Persistence;
 
@@ -16,8 +18,15 @@ builder.Services.AddServerTracing();
 
 builder.Services.AddAnalyticsCore(builder.Configuration);
 builder.Services.AddDatabaseMigration();
-builder.Services.AddLedgerConsumer();
 builder.Services.AddReportProcessing();
+
+// Die Buchungen kommen von der Bank über HTTP, mit dem Token des Kunden. Zuerst das Token
+// weiterreichen, dann Zeitlimit, Wiederholung und Kreis.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddTransient<ForwardHeadersHandler>();
+builder.Services.AddBankStatements(builder.Configuration)
+    .AddHttpMessageHandler<ForwardHeadersHandler>()
+    .AddBankResilienceHandler();
 
 builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddScopePolicies();
@@ -28,6 +37,7 @@ builder.Services.AddControllers(options =>
     options.SuppressAsyncSuffixInActionNames = false;
 });
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<BankFailureHandler>();
 builder.Services.AddExceptionHandler<DatabaseUnavailableHandler>();
 
 builder.Services.AddVersionedSwagger();

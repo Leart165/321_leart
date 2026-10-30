@@ -1,7 +1,9 @@
 namespace Analytics.Infrastructure.Persistence;
 
-// Eine Buchung im Protokoll eines Kunden. Nur was das Partner-Ereignis der Bank enthält: kein
-// Buchungstext, kein Konto.
+// Eine Buchung eines Kunden, wie sie die Bank mit seiner Zustimmung geliefert hat
+// (GET /v2/statements/bookings): kein Buchungstext, kein Konto. Der gespeicherte Stand für einen
+// Ausfall der Bank, für die Monatsberichte und die Tagessummen; gelöscht, sobald die Zustimmung
+// fehlt.
 public sealed class OwnerBooking
 {
     public Guid TransactionId { get; set; }

@@ -10,6 +10,11 @@ public static class Scopes
 
     public const string AnalyticsRead = "analytics:read";
 
+    // Ein Scope der Bank, nicht von uns: damit darf dieser Dienst mit dem Token des Kunden dessen
+    // Buchungen beim Auszugsdienst lesen. Er steht nur im Token, wenn der Kunde zugestimmt hat. Keine
+    // eigene Policy: verlangt wird er bei der Bank, und fehlt er, antwortet die API mit 403.
+    public const string StatementsRead = "statements:read";
+
     public static readonly string[] All = { AnalyticsRead };
 
     // Im Wortlaut von contracts/auth/scopes.md; erscheint in der Spezifikation.

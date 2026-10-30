@@ -7,8 +7,10 @@ import { Session } from "./session.js";
 const PENDING_KEY = "analytics.login";
 
 // analytics:read ist der Standard-Scope von analytics-web; ausdrücklich angefragt, damit die
-// Zustimmung des Kunden genau das nennt, was die Seite braucht.
-const SCOPE = "openid analytics:read";
+// Zustimmung des Kunden genau das nennt, was die Seite braucht. statements:read ist ein Scope der
+// Bank: damit liest unser Dienst mit dem Token des Kunden dessen Buchungen beim Auszugsdienst.
+// Keycloak schreibt ihn erst nach der Zustimmung des Kunden ins Token.
+export const SCOPE = "openid analytics:read statements:read";
 
 export class LoginError extends Error {
   constructor(message, hint) {

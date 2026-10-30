@@ -4,6 +4,12 @@ info:
   title: Analytics Events
   version: 2.0.0
   description: |
+    ABGELÖST durch HTTP: analytics-api liest die Buchungen eines Kunden mit dessen Token über
+    GET /v2/statements/bookings (contracts/statements/openapi.v2.yaml, ab 2.1.0) und hängt nicht
+    mehr am Broker der Bank. Die Queue analytics.partner hat keinen Konsumenten mehr; die Bank
+    nimmt im Contract-Schritt partner.transaction.completed, den Benutzer analytics und die Queue
+    weg. Die Datei bleibt als Nachweis der Umstellung stehen.
+
     Version 2 der Ereignisbindung des Auswertungsdienstes: er konsumiert das schlanke
     Partner-Ereignis partner.transaction.completed aus contracts/partner/asyncapi.v1.yaml statt
     des internen transaction.completed. Kanal, Nachricht und Schema gehören der Bank und werden

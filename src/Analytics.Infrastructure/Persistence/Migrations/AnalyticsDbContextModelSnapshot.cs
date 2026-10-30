@@ -175,57 +175,6 @@ namespace Analytics.Infrastructure.Persistence.Migrations
                     b.ToTable("owner_bookings", (string)null);
                 });
 
-            modelBuilder.Entity("Analytics.Infrastructure.Persistence.OwnerMonthly", b =>
-                {
-                    b.Property<string>("OwnerId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("owner_id");
-
-                    b.Property<int>("Year")
-                        .HasColumnType("integer")
-                        .HasColumnName("year");
-
-                    b.Property<int>("Month")
-                        .HasColumnType("integer")
-                        .HasColumnName("month");
-
-                    b.Property<string>("Currency")
-                        .HasColumnType("char(3)")
-                        .HasColumnName("currency");
-
-                    b.Property<decimal>("Expenses")
-                        .HasColumnType("numeric(19,2)")
-                        .HasColumnName("expenses");
-
-                    b.Property<decimal>("Income")
-                        .HasColumnType("numeric(19,2)")
-                        .HasColumnName("income");
-
-                    b.Property<int>("Transactions")
-                        .HasColumnType("integer")
-                        .HasColumnName("transactions");
-
-                    b.HasKey("OwnerId", "Year", "Month", "Currency");
-
-                    b.ToTable("owner_monthly", (string)null);
-                });
-
-            modelBuilder.Entity("Analytics.Infrastructure.Persistence.ProcessedTransaction", b =>
-                {
-                    b.Property<Guid>("TransactionId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("transaction_id");
-
-                    b.Property<DateTimeOffset>("ProcessedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("processed_at");
-
-                    b.HasKey("TransactionId");
-
-                    b.ToTable("processed_transactions", (string)null);
-                });
-
             modelBuilder.Entity("Analytics.Infrastructure.Persistence.ReportDocumentRecord", b =>
                 {
                     b.Property<Guid>("ReportId")
@@ -240,37 +189,6 @@ namespace Analytics.Infrastructure.Persistence.Migrations
                     b.HasKey("ReportId");
 
                     b.ToTable("report_documents", (string)null);
-                });
-
-            modelBuilder.Entity("Analytics.Infrastructure.Persistence.SystemDaily", b =>
-                {
-                    b.Property<DateOnly>("Day")
-                        .HasColumnType("date")
-                        .HasColumnName("day");
-
-                    b.Property<string>("Currency")
-                        .HasColumnType("char(3)")
-                        .HasColumnName("currency");
-
-                    b.Property<int>("Deposits")
-                        .HasColumnType("integer")
-                        .HasColumnName("deposits");
-
-                    b.Property<int>("Transfers")
-                        .HasColumnType("integer")
-                        .HasColumnName("transfers");
-
-                    b.Property<decimal>("Volume")
-                        .HasColumnType("numeric(19,2)")
-                        .HasColumnName("volume");
-
-                    b.Property<int>("Withdrawals")
-                        .HasColumnType("integer")
-                        .HasColumnName("withdrawals");
-
-                    b.HasKey("Day", "Currency");
-
-                    b.ToTable("system_daily", (string)null);
                 });
 
             modelBuilder.Entity("Analytics.Infrastructure.Persistence.ReportDocumentRecord", b =>

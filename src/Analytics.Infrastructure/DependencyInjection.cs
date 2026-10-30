@@ -26,11 +26,11 @@ public static class DependencyInjection
 
         services.AddDbContext<AnalyticsDbContext>(options => options.UseNpgsql(connectionString));
 
-        services.AddScoped<ITotalsStore, TotalsStore>();
-        services.AddScoped<LedgerProjection>();
-        services.AddScoped<IMonthlyTotalsReader, MonthlyTotalsReader>();
         services.AddScoped<IDailyTotalsReader, DailyTotalsReader>();
         services.AddScoped<IBookingLogReader, BookingLogReader>();
+        services.AddScoped<BookingStore>();
+        services.AddScoped<IBookingStore>(provider => provider.GetRequiredService<BookingStore>());
+        services.AddScoped<CustomerLedger>();
 
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IUnitOfWork, UnitOfWork>();
@@ -48,14 +48,6 @@ public static class DependencyInjection
     public static IServiceCollection AddDatabaseMigration(this IServiceCollection services)
     {
         services.AddHostedService<DatabaseMigrator>();
-        return services;
-    }
-
-    public static IServiceCollection AddLedgerConsumer(this IServiceCollection services)
-    {
-        services.TryAddSingleton(AsyncApiSchemas.FromEmbeddedContracts());
-        services.AddScoped<TransactionCompletedHandler>();
-        services.AddHostedService<PartnerTransactionsConsumer>();
         return services;
     }
 

@@ -1,5 +1,6 @@
-// Zugriff auf die eigene API: die Summen über Version 1, das Buchungsprotokoll über Version 2. Jede Anfrage bekommt eine neue Korrelations-Id; mit ihr
-// findet man in Grafana jede Logzeile dieser Anfrage.
+// Zugriff auf die eigene API: die Summen über Version 1, das Buchungsprotokoll über Version 2.
+// Jede Anfrage bekommt eine neue Korrelations-Id; mit ihr findet man in Grafana jede Logzeile
+// dieser Anfrage, auch die des Aufrufs bei der Bank.
 
 import { randomUuid } from "../auth/pkce.js";
 
@@ -81,7 +82,15 @@ export class AnalyticsApi {
       throw new ApiError(0, "Der Auswertungsdienst ist nicht erreichbar.", correlationId);
     }
 
-    this.onRequest({ path, correlationId, status: response.status, ms: Math.round(performance.now() - started) });
+    // X-Data-Source: "live" frisch von der Bank, "stored" der gespeicherte Stand, weil die Bank
+    // gerade nicht zu erreichen war.
+    this.onRequest({
+      path,
+      correlationId,
+      status: response.status,
+      ms: Math.round(performance.now() - started),
+      source: response.headers.get("X-Data-Source")
+    });
 
     if (response.ok) {
       return blob ? response.blob() : response.json();
@@ -102,7 +111,12 @@ export function missingScopeIn(challenge) {
   return match ? match[1] : null;
 }
 
-function messageFor(status, problem, missingScope) {
+const CONSENT_TEXT = {
+  "statements:read": "Du hast uns nicht erlaubt, deine Buchungen bei der Bank zu lesen.",
+  "analytics:read": "Du hast uns nicht erlaubt, deine Auswertungen zu zeigen."
+};
+
+export function messageFor(status, problem, missingScope) {
   switch (status) {
     case 400:
     case 404:
@@ -112,7 +126,7 @@ function messageFor(status, problem, missingScope) {
       return "Die Anmeldung ist abgelaufen oder das Token wird nicht akzeptiert.";
     case 403:
       return missingScope
-        ? `Du hast uns ${missingScope} nicht freigegeben. Melde dich neu an und stimme bei der Bank zu.`
+        ? `${CONSENT_TEXT[missingScope] ?? `Du hast uns ${missingScope} nicht freigegeben.`} Melde dich neu an und stimme bei der Bank zu.`
         : "Dafür fehlt die Rolle bank-admin.";
     default:
       return problem.title ?? `Unerwartete Antwort ${status}.`;

@@ -163,7 +163,7 @@ function showSignedOut(error) {
         h("h1", {}, "Auswertungen zu deinen Konten"),
         h("p", { class: "lead" },
           "Wir rechnen für deine Bank Statistiken zu deinen Buchungen. Melde dich mit dem Login deiner Bank an; " +
-          "ein eigenes Konto bei uns brauchst du nicht. Deine Bank fragt dich beim ersten Mal, ob du uns das Lesen deiner Summen und Buchungen erlaubst."),
+          "ein eigenes Konto bei uns brauchst du nicht. Deine Bank fragt dich beim ersten Mal, ob du uns erlaubst, deine Buchungen bei ihr zu lesen."),
         error ? notice("error", error.message, error.hint) : null,
         h("button", {
           type: "button",
@@ -220,6 +220,10 @@ function renderStatus() {
           title: "In die Zwischenablage kopieren, um sie in Grafana zu suchen",
           onClick: () => navigator.clipboard?.writeText(request.correlationId)
         }, request.correlationId))
+      : null,
+    request?.source === "stored"
+      ? h("span", { class: "statusbar__stale", title: "Die Zahlen sind der zuletzt bei der Bank gelesene Stand." },
+        "Bank nicht erreichbar, gespeicherter Stand")
       : null,
     h("a", { href: "swagger", class: "statusbar__link" }, "API (Swagger)"));
 }
