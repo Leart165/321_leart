@@ -797,3 +797,75 @@ td time {
   color: var(--negative);
   font-weight: 600;
 }
+
+/* Monatsbudget. Ohne Farbe wie der Rest: die Stufe zeigt sich an Füllung und Rand. */
+.budget {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.budget p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.budget__bar {
+  height: 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.budget__bar span {
+  display: block;
+  height: 100%;
+  background: var(--expenses);
+}
+
+.budget__bar--warning span,
+.budget__bar--exceeded span {
+  background: var(--accent);
+}
+
+.budget__bar--exceeded {
+  border-color: var(--accent);
+}
+
+.budget-alerts {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.budget-alert--exceeded {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Warnung oben auf jeder Seite. */
+.budget-banner {
+  background: var(--warning-bg);
+  border-bottom: 1px solid var(--warning-border);
+}
+
+.budget-banner--exceeded {
+  background: var(--error-bg);
+  border-bottom: 2px solid var(--accent);
+}
+
+.budget-banner__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 10px 20px;
+}
+
+.budget-banner__inner a {
+  margin-left: auto;
+  color: var(--text);
+}

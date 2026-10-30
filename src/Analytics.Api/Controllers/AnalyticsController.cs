@@ -18,11 +18,13 @@ public sealed class AnalyticsController : ControllerBase
 {
     private readonly CustomerLedger _ledger;
     private readonly IDailyTotalsReader _dailyTotals;
+    private readonly BudgetTrigger _budget;
 
-    public AnalyticsController(CustomerLedger ledger, IDailyTotalsReader dailyTotals)
+    public AnalyticsController(CustomerLedger ledger, IDailyTotalsReader dailyTotals, BudgetTrigger budget)
     {
         _ledger = ledger;
         _dailyTotals = dailyTotals;
+        _budget = budget;
     }
 
     [HttpGet("me/monthly")]
@@ -39,6 +41,7 @@ public sealed class AnalyticsController : ControllerBase
         MonthlyOverview overview = await _ledger.GetMonthlyAsync(
             User.OwnerId(), User.HasConsentedToBankBookings(), year, cancellationToken);
         DataSource.Report(Response, overview.Source);
+        await _budget.AfterBookingsAsync(User.OwnerId(), overview.NewBookings, cancellationToken);
         return Ok(overview.Months.Select(MonthlyTotalDto.From).ToList());
     }
 

@@ -2,10 +2,12 @@ using Analytics.Domain.Reports;
 
 namespace Analytics.Api.Dtos;
 
+// kind: monthly für den Monatsbericht, annual für den Jahresauszug; dann fehlt month.
 public sealed record ReportDto(
     Guid ReportId,
+    string Kind,
     int Year,
-    int Month,
+    int? Month,
     string Status,
     int? BookingCount,
     string? Failure,
@@ -17,6 +19,7 @@ public sealed record ReportDto(
         ReportPeriod period = report.Period;
         return new ReportDto(
             report.Id,
+            period.IsYear ? "annual" : "monthly",
             period.Year,
             period.Month,
             report.Status.ToString().ToLowerInvariant(),

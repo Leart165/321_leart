@@ -10,6 +10,9 @@ public static class ReportTopology
 {
     public const string Exchange = "analytics.events";
 
+    public const string ContentType = "application/json";
+
+    // Monatsbericht.
     public const string ReportRequestedRoutingKey = "report.requested";
 
     public const string ReportRequestedType = "ReportRequested";
@@ -18,7 +21,14 @@ public static class ReportTopology
 
     public const string ReportsDeadLetterQueue = "analytics.reports.dlq";
 
-    public const string ContentType = "application/json";
+    // Jahresauszug: eigene Queue, damit ein grosser Auszug die Monatsberichte nicht aufhält.
+    public const string AnnualReportRequestedRoutingKey = "annual-report.requested";
+
+    public const string AnnualReportRequestedType = "AnnualReportRequested";
+
+    public const string AnnualReportsQueue = "analytics.annual-reports";
+
+    public const string AnnualReportsDeadLetterQueue = "analytics.annual-reports.dlq";
 
     // Idempotent: wer zuerst startet, legt an, alle anderen bestätigen nur.
     public static Task DeclareExchangeAsync(IChannel channel, CancellationToken cancellationToken)
@@ -28,7 +38,26 @@ public static class ReportTopology
             cancellationToken: cancellationToken);
     }
 
-    public static async Task DeclareReportsQueueAsync(IChannel channel, CancellationToken cancellationToken)
+    public static Task DeclareReportsQueueAsync(IChannel channel, CancellationToken cancellationToken)
+    {
+        return DeclareQueueAsync(channel, ReportsQueue, ReportsDeadLetterQueue, ReportRequestedRoutingKey, cancellationToken);
+    }
+
+    public static Task DeclareAnnualReportsQueueAsync(IChannel channel, CancellationToken cancellationToken)
+    {
+        return DeclareQueueAsync(
+            channel, AnnualReportsQueue, AnnualReportsDeadLetterQueue, AnnualReportRequestedRoutingKey, cancellationToken);
+    }
+
+    // Eine Queue an analytics.events mit eigener Dead-Letter-Queue. Routing Key ins
+    // Dead-Letter-Exchange ist der Name der Queue, wie bei der Bank: jede verworfene Nachricht
+    // findet ihre eigene Dead-Letter-Queue.
+    public static async Task DeclareQueueAsync(
+        IChannel channel,
+        string queue,
+        string deadLetterQueue,
+        string routingKey,
+        CancellationToken cancellationToken)
     {
         await DeclareExchangeAsync(channel, cancellationToken);
 
@@ -37,26 +66,22 @@ public static class ReportTopology
             cancellationToken: cancellationToken);
 
         await channel.QueueDeclareAsync(
-            ReportsDeadLetterQueue, durable: true, exclusive: false, autoDelete: false,
+            deadLetterQueue, durable: true, exclusive: false, autoDelete: false,
             cancellationToken: cancellationToken);
 
-        // Routing Key ist der Name der Queue, wie bei der Bank: jede verworfene Nachricht findet
-        // ihre eigene Dead-Letter-Queue.
         await channel.QueueBindAsync(
-            ReportsDeadLetterQueue, MessagingTopology.DeadLetterExchange, ReportsQueue,
+            deadLetterQueue, MessagingTopology.DeadLetterExchange, queue,
             cancellationToken: cancellationToken);
 
         await channel.QueueDeclareAsync(
-            ReportsQueue, durable: true, exclusive: false, autoDelete: false,
+            queue, durable: true, exclusive: false, autoDelete: false,
             arguments: new Dictionary<string, object?>
             {
                 ["x-dead-letter-exchange"] = MessagingTopology.DeadLetterExchange,
-                ["x-dead-letter-routing-key"] = ReportsQueue
+                ["x-dead-letter-routing-key"] = queue
             },
             cancellationToken: cancellationToken);
 
-        await channel.QueueBindAsync(
-            ReportsQueue, Exchange, ReportRequestedRoutingKey,
-            cancellationToken: cancellationToken);
+        await channel.QueueBindAsync(queue, Exchange, routingKey, cancellationToken: cancellationToken);
     }
 }

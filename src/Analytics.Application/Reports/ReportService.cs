@@ -5,7 +5,8 @@ using Analytics.Domain.Reports;
 
 namespace Analytics.Application.Reports;
 
-// Alle Vorgänge rund um Monatsberichte. Wie die Überweisung der Bank in zwei Schritten:
+// Alle Vorgänge rund um Berichte: Monatsberichte und Jahresauszüge. Wie die Überweisung der Bank
+// in zwei Schritten:
 //
 // RequestAsync läuft in der API. Sie prüft, holt die Buchungen des Monats mit dem Token des Kunden
 // bei der Bank und speichert sie zusammen mit dem Bericht und dem Ereignis report.requested in der
@@ -56,7 +57,7 @@ public sealed class ReportService
     // Ohne Zustimmung oder bei einer Absage der Bank wirft es BankAccessDeniedException, ist die
     // Bank weg, BankUnavailableException. Einen gespeicherten Stand gibt es hier nicht: ein Bericht
     // soll den ganzen Monat zeigen, nicht den zuletzt bekannten Teil.
-    public async Task<MonthlyReport> RequestAsync(
+    public Task<MonthlyReport> RequestAsync(
         string ownerId,
         bool consented,
         int year,
@@ -64,7 +65,28 @@ public sealed class ReportService
         string correlationId,
         CancellationToken cancellationToken)
     {
-        ReportPeriod period = ReportPeriod.Of(year, month);
+        return RequestAsync(ownerId, consented, ReportPeriod.Of(year, month), correlationId, cancellationToken);
+    }
+
+    // Der Jahresauszug: dieselben Schritte für ein ganzes Kalenderjahr. Die Bank liefert höchstens
+    // 366 Tage auf einmal; ein Jahr passt also in einen Aufruf.
+    public Task<MonthlyReport> RequestAnnualAsync(
+        string ownerId,
+        bool consented,
+        int year,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        return RequestAsync(ownerId, consented, ReportPeriod.OfYear(year), correlationId, cancellationToken);
+    }
+
+    private async Task<MonthlyReport> RequestAsync(
+        string ownerId,
+        bool consented,
+        ReportPeriod period,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
         MonthlyReport report = MonthlyReport.Request(ownerId, period, _clock.GetUtcNow());
 
         IReadOnlyList<BookingEntry> bookings = await _ledger.FetchAsync(
@@ -109,7 +131,8 @@ public sealed class ReportService
         byte[] content = await _reports.FindDocumentAsync(reportId, cancellationToken)
             ?? throw new ReportNotReadyException(reportId, report.Status);
 
-        return new ReportDocument(content, _renderer.ContentType, $"buchungen-{report.Period}.pdf");
+        string name = report.Period.IsYear ? $"jahresauszug-{report.Period}.pdf" : $"buchungen-{report.Period}.pdf";
+        return new ReportDocument(content, _renderer.ContentType, name);
     }
 
     // Die Arbeit des Konsumenten. Idempotent: der Broker stellt mindestens einmal zu, ein

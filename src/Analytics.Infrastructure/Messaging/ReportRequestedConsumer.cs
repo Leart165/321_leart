@@ -33,6 +33,8 @@ public sealed class ReportRequestedConsumer : QueueConsumer
     protected override Task<string> HandleAsync(IServiceProvider services, BasicDeliverEventArgs delivery)
     {
         ReportRequestedHandler handler = services.GetRequiredService<ReportRequestedHandler>();
-        return handler.HandleAsync(delivery.Body, delivery.BasicProperties.Type, delivery.Redelivered, delivery.CancellationToken);
+        return handler.HandleAsync(
+            delivery.Body, delivery.BasicProperties.Type, ReportTopology.ReportRequestedType,
+            delivery.Redelivered, delivery.CancellationToken);
     }
 }

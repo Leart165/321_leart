@@ -180,6 +180,39 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
     }
 
     [Fact]
+    public async Task An_annual_statement_asks_the_bank_for_the_whole_year_and_goes_to_its_own_queue()
+    {
+        _bank.Deposit(100m, new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        _bank.Deposit(50m, new DateTimeOffset(2025, 12, 31, 23, 59, 0, TimeSpan.Zero));
+        _bank.Deposit(999m, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+
+        MonthlyReport report = await WithServiceAsync(service =>
+            service.RequestAnnualAsync(Owner, true, 2025, "corr-j", CancellationToken.None));
+
+        Assert.Equal(ReportPeriod.OfYear(2025), report.Period);
+        (DateTimeOffset from, DateTimeOffset to) = Assert.Single(_bank.Calls);
+        Assert.Equal(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero), from);
+        Assert.Equal(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), to);
+
+        await using (AnalyticsDbContext context = _postgres.CreateContext())
+        {
+            OutboxMessage message = await context.Outbox.SingleAsync();
+            Assert.Equal(ReportTopology.AnnualReportRequestedRoutingKey, message.RoutingKey);
+            Assert.Equal(ReportTopology.AnnualReportRequestedType, message.Type);
+            using JsonDocument payload = JsonDocument.Parse(message.Payload);
+            Assert.Equal(2025, payload.RootElement.GetProperty("year").GetInt32());
+            Assert.False(payload.RootElement.TryGetProperty("month", out _));
+        }
+
+        Assert.Equal(ReportGeneration.Generated, await GenerateAsync(report.Id));
+        ReportDocument document = await WithServiceAsync(service => service.GetDocumentAsync(report.Id, Owner, CancellationToken.None));
+        Assert.Equal("jahresauszug-2025.pdf", document.FileName);
+        Assert.Contains("Jahresauszug 2025", System.Text.Encoding.Latin1.GetString(document.Content));
+        MonthlyReport ready = await WithServiceAsync(service => service.GetOwnedAsync(report.Id, Owner, CancellationToken.None));
+        Assert.Equal(2, ready.BookingCount);
+    }
+
+    [Fact]
     public async Task An_unknown_report_is_reported_as_unknown()
     {
         Assert.Equal(ReportGeneration.Unknown, await GenerateAsync(Guid.NewGuid()));
@@ -218,7 +251,7 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
         Assert.Equal(new[] { newer.Id, older.Id }, reports.Select(report => report.Id));
     }
 
-    public static ServiceProvider Services(string connectionString)
+    public static ServiceProvider Services(string connectionString, TimeProvider? clock = null)
     {
         IConfiguration configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -230,6 +263,10 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
         ServiceCollection services = new ServiceCollection();
         services.AddLogging();
         services.AddAnalyticsCore(configuration);
+        if (clock is not null)
+        {
+            services.AddSingleton(clock);
+        }
 
         // Die Bank ohne HTTP; die Tests der API prüfen den Weg über HTTP.
         services.AddSingleton<InMemoryBank>();
@@ -239,6 +276,7 @@ public sealed class ReportServiceTests : IClassFixture<PostgresFixture>, IAsyncL
         // ein Test selbst, mit dem Broker der Testklasse.
         services.AddSingleton(AsyncApiSchemas.FromEmbeddedContracts());
         services.AddScoped<ReportRequestedHandler>();
+        services.AddScoped<BudgetCheckHandler>();
         return services.BuildServiceProvider();
     }
 

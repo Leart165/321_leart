@@ -1,5 +1,6 @@
 import { ApiError } from "../api/analyticsApi.js";
 import { currenciesOf, formatCount, formatCompactMoney, formatMoney, monthSeries, yearTotals } from "../domain/figures.js";
+import { createBudgetCard } from "./budgetCard.js";
 import { barChart, card, empty, kpi, loading, notice, select, table } from "./components.js";
 import { h, replace } from "./dom.js";
 
@@ -9,9 +10,10 @@ const SCOPE_TEXT = {
 };
 
 // Meine Übersicht: Summen eines Jahres je Monat, aus den Buchungen, die wir bei der Bank lesen.
-export function createOverviewView({ api, session, onUnauthorized, onReconsent }) {
+export function createOverviewView({ api, session, onUnauthorized, onReconsent, onBudget = () => {} }) {
   const thisYear = new Date().getFullYear();
   const state = { year: thisYear, currency: null, months: null };
+  const budget = createBudgetCard({ api, onUnauthorized, onChanged: onBudget });
 
   const controls = h("div", { class: "controls" });
   const body = h("div", { class: "stack" });
@@ -32,6 +34,7 @@ export function createOverviewView({ api, session, onUnauthorized, onReconsent }
         state.currency = currencies[0] ?? "CHF";
       }
       render();
+      budget.load();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         onUnauthorized();
@@ -60,7 +63,7 @@ export function createOverviewView({ api, session, onUnauthorized, onReconsent }
         })
         : null);
 
-    replace(body, yearCards(), consentCard(session));
+    replace(body, yearCards(), budget.element, consentCard(session));
   }
 
   function yearCards() {

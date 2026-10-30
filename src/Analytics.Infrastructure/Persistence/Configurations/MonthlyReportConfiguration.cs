@@ -24,7 +24,8 @@ public sealed class MonthlyReportConfiguration : IEntityTypeConfiguration<Monthl
 
         builder.Ignore(report => report.Period);
         builder.Property<int>("_year").HasColumnName("year");
-        builder.Property<int>("_month").HasColumnName("month");
+        // Leer beim Jahresauszug.
+        builder.Property<int?>("_month").HasColumnName("month");
 
         builder.Property(report => report.Status)
             .HasColumnName("status")

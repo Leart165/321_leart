@@ -50,6 +50,22 @@ public sealed class MonthlyReportTests
     }
 
     [Fact]
+    public void A_year_covers_january_to_december_and_may_be_the_current_one()
+    {
+        ReportPeriod year = ReportPeriod.OfYear(2025);
+
+        Assert.True(year.IsYear);
+        Assert.Null(year.Month);
+        Assert.Equal(new DateOnly(2025, 1, 1), year.FirstDay);
+        Assert.Equal(new DateOnly(2025, 12, 31), year.LastDay);
+        Assert.Equal("2025", year.ToString());
+        Assert.Equal(year, ReportPeriod.Restore(2025, null));
+        Assert.Equal(ReportStatus.Requested, MonthlyReport.Request("kunde-1", ReportPeriod.OfYear(2026), Now).Status);
+        Assert.Throws<InvalidReportRequestException>(() => MonthlyReport.Request("kunde-1", ReportPeriod.OfYear(2027), Now));
+        Assert.Throws<InvalidReportRequestException>(() => ReportPeriod.OfYear(1999));
+    }
+
+    [Fact]
     public void A_report_without_owner_is_rejected()
     {
         Assert.Throws<InvalidReportRequestException>(() => MonthlyReport.Request(" ", ReportPeriod.Of(2026, 9), Now));

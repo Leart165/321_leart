@@ -6,6 +6,9 @@ using System.Text.Json;
 
 namespace Analytics.Infrastructure.Messaging;
 
+// Verarbeitet einen Antrag auf einen Bericht, egal ob Monatsbericht aus analytics.reports oder
+// Jahresauszug aus analytics.annual-reports: beide Nachrichten tragen die reportId, alles andere
+// steht in der eigenen Datenbank.
 public sealed class ReportRequestedHandler
 {
     private static readonly JsonSerializerOptions SerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
@@ -21,15 +24,26 @@ public sealed class ReportRequestedHandler
         _logger = logger;
     }
 
+    // expectedType ist das Ereignis, das in diese Queue gehört. Trägt die Nachricht einen anderen
+    // Typ, passt sie nicht hierher und geht in die Dead-Letter-Queue.
     public async Task<string> HandleAsync(
         ReadOnlyMemory<byte> body,
         string? messageType,
+        string expectedType,
         bool redelivered,
         CancellationToken cancellationToken)
     {
         string payload = Encoding.UTF8.GetString(body.Span);
 
-        IReadOnlyList<string> errors = _schemas.Validate(messageType ?? ReportTopology.ReportRequestedType, payload);
+        if (messageType is not null && !string.Equals(messageType, expectedType, StringComparison.Ordinal))
+        {
+            _logger.LogError(
+                "Nachricht vom Typ {Type} gehört nicht in diese Queue ({Expected}), sie geht in die Dead-Letter-Queue.",
+                messageType, expectedType);
+            return ConsumeOutcome.DeadLettered;
+        }
+
+        IReadOnlyList<string> errors = _schemas.Validate(expectedType, payload);
         if (errors.Count > 0)
         {
             _logger.LogError(
@@ -40,7 +54,7 @@ public sealed class ReportRequestedHandler
 
         try
         {
-            ReportRequestedPayload request = JsonSerializer.Deserialize<ReportRequestedPayload>(payload, SerializerOptions)
+            ReportReference request = JsonSerializer.Deserialize<ReportReference>(payload, SerializerOptions)
                 ?? throw new JsonException("Der Nachrichtenkörper ist leer.");
 
             ReportGeneration result = await _reports.GenerateAsync(request.ReportId, cancellationToken);
@@ -48,20 +62,20 @@ public sealed class ReportRequestedHandler
             {
                 case ReportGeneration.Generated:
                     _logger.LogInformation(
-                        "Monatsbericht {ReportId} für {Year}-{Month:D2} als PDF erstellt.",
-                        request.ReportId, request.Year, request.Month);
+                        "Bericht {ReportId} für {Year} als PDF erstellt ({Type}).",
+                        request.ReportId, request.Year, expectedType);
                     return ConsumeOutcome.Processed;
 
                 case ReportGeneration.Failed:
-                    _logger.LogWarning("Monatsbericht {ReportId} ist gescheitert, Grund steht im Bericht.", request.ReportId);
+                    _logger.LogWarning("Bericht {ReportId} ist gescheitert, Grund steht im Bericht.", request.ReportId);
                     return ConsumeOutcome.Processed;
 
                 case ReportGeneration.AlreadyCompleted:
-                    _logger.LogInformation("Monatsbericht {ReportId} war schon erstellt, nichts geändert.", request.ReportId);
+                    _logger.LogInformation("Bericht {ReportId} war schon erstellt, nichts geändert.", request.ReportId);
                     return ConsumeOutcome.Duplicate;
 
                 default:
-                    _logger.LogError("Monatsbericht {ReportId} gibt es nicht, der Antrag geht in die Dead-Letter-Queue.", request.ReportId);
+                    _logger.LogError("Bericht {ReportId} gibt es nicht, der Antrag geht in die Dead-Letter-Queue.", request.ReportId);
                     return ConsumeOutcome.DeadLettered;
             }
         }
@@ -90,3 +104,6 @@ public sealed class ReportRequestedHandler
         }
     }
 }
+
+// Was beide Anträge gemeinsam haben; das Schema hat die Nachricht schon geprüft.
+internal sealed record ReportReference(Guid ReportId, int Year);

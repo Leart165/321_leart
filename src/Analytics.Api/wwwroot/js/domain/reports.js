@@ -1,4 +1,4 @@
-// Monatsberichte: reine Funktionen, ohne DOM und ohne Netz.
+// Berichte, Monatsbericht und Jahresauszug: reine Funktionen, ohne DOM und ohne Netz.
 
 import { MONTHS } from "./figures.js";
 
@@ -48,8 +48,30 @@ export function parseMonth(value) {
   return match ? { year: Number(match[1]), month: Number(match[2]) } : null;
 }
 
+export function isAnnual(report) {
+  return report.kind === "annual";
+}
+
+// "Jahresauszug 2026" oder "September 2026".
+export function reportTitle(report) {
+  return isAnnual(report) ? `Jahresauszug ${report.year}` : monthName(report.year, report.month);
+}
+
 export function reportFileName(report) {
-  return `buchungen-${report.year}-${String(report.month).padStart(2, "0")}.pdf`;
+  return isAnnual(report)
+    ? `jahresauszug-${report.year}.pdf`
+    : `buchungen-${report.year}-${String(report.month).padStart(2, "0")}.pdf`;
+}
+
+// Das laufende Jahr und die vier davor, neueste zuerst. Ein Jahr in der Zukunft lehnt die API ab.
+export function reportYears(today = new Date(), count = 5) {
+  return Array.from({ length: count }, (_, index) => today.getFullYear() - index)
+    .map((year) => ({ value: String(year), label: String(year) }));
+}
+
+// Standard: das letzte abgeschlossene Jahr.
+export function defaultReportYear(today = new Date()) {
+  return String(today.getFullYear() - 1);
 }
 
 // Ersetzt einen Bericht in der Liste durch seinen neuen Stand oder setzt ihn an den Anfang.

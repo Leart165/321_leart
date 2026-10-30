@@ -22,6 +22,83 @@ namespace Analytics.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Analytics.Domain.Budgets.BudgetAlert", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Level")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("level");
+
+                    b.Property<decimal>("Limit")
+                        .HasColumnType("numeric(19,2)")
+                        .HasColumnName("monthly_limit");
+
+                    b.Property<int>("Month")
+                        .HasColumnType("integer")
+                        .HasColumnName("month");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("owner_id");
+
+                    b.Property<DateTimeOffset>("RaisedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("raised_at");
+
+                    b.Property<decimal>("Spent")
+                        .HasColumnType("numeric(19,2)")
+                        .HasColumnName("spent");
+
+                    b.Property<int>("Year")
+                        .HasColumnType("integer")
+                        .HasColumnName("year");
+
+                    b.Property<string>("_currency")
+                        .IsRequired()
+                        .HasColumnType("char(3)")
+                        .HasColumnName("currency");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId", "Year", "Month", "Level")
+                        .IsUnique()
+                        .HasDatabaseName("ux_budget_alerts_owner_month_level");
+
+                    b.ToTable("budget_alerts", (string)null);
+                });
+
+            modelBuilder.Entity("Analytics.Domain.Budgets.MonthlyBudget", b =>
+                {
+                    b.Property<string>("OwnerId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("owner_id");
+
+                    b.Property<decimal>("Limit")
+                        .HasColumnType("numeric(19,2)")
+                        .HasColumnName("monthly_limit");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("_currency")
+                        .IsRequired()
+                        .HasColumnType("char(3)")
+                        .HasColumnName("currency");
+
+                    b.HasKey("OwnerId");
+
+                    b.ToTable("budgets", (string)null);
+                });
+
             modelBuilder.Entity("Analytics.Domain.Reports.MonthlyReport", b =>
                 {
                     b.Property<Guid>("Id")
@@ -63,7 +140,7 @@ namespace Analytics.Infrastructure.Persistence.Migrations
                         .HasColumnType("xid")
                         .HasColumnName("xmin");
 
-                    b.Property<int>("_month")
+                    b.Property<int?>("_month")
                         .HasColumnType("integer")
                         .HasColumnName("month");
 

@@ -6,8 +6,8 @@ public sealed class ReportNotReadyException : Exception
 {
     public ReportNotReadyException(Guid reportId, ReportStatus status)
         : base(status == ReportStatus.Failed
-            ? $"Der Monatsbericht {reportId} ist gescheitert, es gibt kein PDF."
-            : $"Der Monatsbericht {reportId} wird noch erstellt.")
+            ? $"Der Bericht {reportId} ist gescheitert, es gibt kein PDF."
+            : $"Der Bericht {reportId} wird noch erstellt.")
     {
         ReportId = reportId;
         Status = status;

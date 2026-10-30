@@ -24,11 +24,13 @@ public sealed class AnalyticsController : ControllerBase
 
     private readonly CustomerLedger _ledger;
     private readonly IDailyTotalsReader _dailyTotals;
+    private readonly BudgetTrigger _budget;
 
-    public AnalyticsController(CustomerLedger ledger, IDailyTotalsReader dailyTotals)
+    public AnalyticsController(CustomerLedger ledger, IDailyTotalsReader dailyTotals, BudgetTrigger budget)
     {
         _ledger = ledger;
         _dailyTotals = dailyTotals;
+        _budget = budget;
     }
 
     // Jede einzelne Buchung des Inhabers, neueste zuerst. Ohne Angabe die letzten 30 Tage.
@@ -61,6 +63,7 @@ public sealed class AnalyticsController : ControllerBase
         LedgerSnapshot snapshot = await _ledger.GetBookingsAsync(
             User.OwnerId(), User.HasConsentedToBankBookings(), first, last, cancellationToken);
         DataSource.Report(Response, snapshot.Source);
+        await _budget.AfterBookingsAsync(User.OwnerId(), snapshot.NewBookings, cancellationToken);
 
         return Ok(snapshot.Bookings
             .OrderByDescending(entry => entry.BookedAt)
@@ -83,6 +86,7 @@ public sealed class AnalyticsController : ControllerBase
         MonthlyOverview overview = await _ledger.GetMonthlyAsync(
             User.OwnerId(), User.HasConsentedToBankBookings(), year, cancellationToken);
         DataSource.Report(Response, overview.Source);
+        await _budget.AfterBookingsAsync(User.OwnerId(), overview.NewBookings, cancellationToken);
         return Ok(overview.Months.Select(MonthlyTotalDto.From).ToList());
     }
 

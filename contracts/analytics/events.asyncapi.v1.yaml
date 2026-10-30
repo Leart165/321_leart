@@ -8,7 +8,14 @@ info:
     bank.events: ein eigener Topic-Exchange analytics.events, geschrieben über eine Outbox in
     derselben Datenbanktransaktion wie die Änderung, die das Ereignis meldet.
 
-    Heute nur ein Ereignis: report.requested. Ein Kunde beantragt über
+    Drei Ereignisse, jedes mit eigener Queue und Dead-Letter-Queue:
+
+    - report.requested: Monatsbericht als PDF, Queue analytics.reports
+    - annual-report.requested: Jahresauszug als PDF, Queue analytics.annual-reports
+    - budget.check.requested: Ausgaben eines Monats mit dem Budget vergleichen und bei 80 und
+      100 Prozent warnen, Queue analytics.budgets
+
+    Monatsbericht: report.requested. Ein Kunde beantragt über
     POST /v2/analytics/me/reports (contracts/analytics/openapi.v2.yaml) einen Monatsbericht als
     PDF. Die API antwortet sofort mit 202; erzeugt wird das PDF vom Konsumenten der Queue
     analytics.reports. So nimmt die API weiter Anträge an, auch wenn das Erzeugen gerade hängt,
@@ -76,6 +83,82 @@ channels:
       ReportRequested:
         $ref: '#/components/messages/ReportRequested'
 
+  annualReportRequested:
+    address: annual-report.requested
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: analytics.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: Ein Kunde hat einen Jahresauszug als PDF beantragt.
+    messages:
+      AnnualReportRequested:
+        $ref: '#/components/messages/AnnualReportRequested'
+
+  annualReportsQueue:
+    address: analytics.annual-reports
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: analytics.annual-reports
+          durable: true
+          exclusive: false
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: |
+      Queue des Konsumenten in analytics-api, gebunden an annual-report.requested. Eigene Queue,
+      damit ein grosser Auszug die Monatsberichte nicht aufhält. Dead-Letter-Exchange
+      analytics.dlx, Dead-Letter-Queue analytics.annual-reports.dlq.
+    x-deadLetterExchange: analytics.dlx
+    x-deadLetterQueue: analytics.annual-reports.dlq
+    messages:
+      AnnualReportRequested:
+        $ref: '#/components/messages/AnnualReportRequested'
+
+  budgetCheckRequested:
+    address: budget.check.requested
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: analytics.events
+          type: topic
+          durable: true
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: |
+      Die Ausgaben eines Monats sollen mit dem Budget des Kunden verglichen werden. Kommt nach
+      jedem Abgleich mit der Bank, der neue Buchungen gebracht hat, und nach jeder Änderung des
+      Budgets.
+    messages:
+      BudgetCheckRequested:
+        $ref: '#/components/messages/BudgetCheckRequested'
+
+  budgetsQueue:
+    address: analytics.budgets
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: analytics.budgets
+          durable: true
+          exclusive: false
+          autoDelete: false
+        bindingVersion: 0.3.0
+    description: |
+      Queue des Konsumenten in analytics-api, gebunden an budget.check.requested. Dead-Letter-
+      Exchange analytics.dlx, Dead-Letter-Queue analytics.budgets.dlq.
+    x-deadLetterExchange: analytics.dlx
+    x-deadLetterQueue: analytics.budgets.dlq
+    messages:
+      BudgetCheckRequested:
+        $ref: '#/components/messages/BudgetCheckRequested'
+
 operations:
   publishReportRequested:
     action: send
@@ -100,6 +183,41 @@ operations:
       Bericht nicht, geht sie ohne Wiederholung in analytics.reports.dlq. Ist nur die eigene
       Datenbank kurz weg, geht sie zurück in die Queue.
 
+  publishAnnualReportRequested:
+    action: send
+    channel:
+      $ref: '#/channels/annualReportRequested'
+    summary: analytics-api meldet einen beantragten Jahresauszug.
+    description: Über die Outbox, in derselben Transaktion wie der Bericht und die Buchungen des Jahres.
+
+  receiveAnnualReportRequested:
+    action: receive
+    channel:
+      $ref: '#/channels/annualReportsQueue'
+    summary: analytics-api erzeugt den Jahresauszug.
+    description: |
+      Wie beim Monatsbericht: PDF aus den gespeicherten Buchungen des Jahres, ready oder failed;
+      schon erledigt heisst nur bestätigen; kontraktwidrig oder unbekannt in
+      analytics.annual-reports.dlq; Datenbank kurz weg zurück in die Queue.
+
+  publishBudgetCheckRequested:
+    action: send
+    channel:
+      $ref: '#/channels/budgetCheckRequested'
+    summary: analytics-api lässt die Ausgaben eines Monats prüfen.
+    description: Über die Outbox, nach neuen Buchungen von der Bank und nach jeder Änderung des Budgets.
+
+  receiveBudgetCheckRequested:
+    action: receive
+    channel:
+      $ref: '#/channels/budgetsQueue'
+    summary: analytics-api vergleicht die Ausgaben mit dem Budget.
+    description: |
+      Rechnet die Ausgaben des Monats aus den gespeicherten Buchungen und legt bei 80 Prozent
+      eine Warnung warning und bei 100 Prozent eine Warnung exceeded an, je Monat und Stufe
+      höchstens einmal. Ohne Budget passiert nichts. Kontraktwidrig in analytics.budgets.dlq,
+      Datenbank kurz weg zurück in die Queue.
+
 components:
   messageTraits:
     commonHeaders:
@@ -114,10 +232,10 @@ components:
           correlation-id:
             type: string
             maxLength: 100
-            description: Die Korrelations-Id der Anfrage, mit der der Kunde den Bericht beantragt hat.
+            description: Die Korrelations-Id der Anfrage, die das Ereignis ausgelöst hat.
           type:
             type: string
-            description: Name des Ereignisses, hier ReportRequested.
+            description: Name des Ereignisses, ReportRequested, AnnualReportRequested oder BudgetCheckRequested.
           schema-version:
             type: integer
             enum: [1]
@@ -135,6 +253,24 @@ components:
       payload:
         $ref: '#/components/schemas/ReportRequested'
 
+    AnnualReportRequested:
+      name: AnnualReportRequested
+      title: Jahresauszug beantragt
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/AnnualReportRequested'
+
+    BudgetCheckRequested:
+      name: BudgetCheckRequested
+      title: Budget prüfen
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/BudgetCheckRequested'
+
   schemas:
     ReportRequested:
       type: object
@@ -145,6 +281,45 @@ components:
           type: string
           format: uuid
           description: Id des Berichts in analytics-api. Inhaber und Zustand stehen dort, nicht in der Nachricht.
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        requestedAt:
+          type: string
+          format: date-time
+
+    AnnualReportRequested:
+      type: object
+      required: [reportId, year, requestedAt]
+      additionalProperties: false
+      properties:
+        reportId:
+          type: string
+          format: uuid
+          description: Id des Berichts in analytics-api, wie bei ReportRequested.
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+        requestedAt:
+          type: string
+          format: date-time
+
+    BudgetCheckRequested:
+      type: object
+      required: [ownerId, year, month, requestedAt]
+      additionalProperties: false
+      properties:
+        ownerId:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Der Kunde, der sub-Claim seines Tokens. Beträge stehen nie in der Nachricht.
         year:
           type: integer
           minimum: 2000

@@ -7,7 +7,9 @@ info:
     Version 2 des Auswertungsdienstes der Analytics-Firma. Expand: Version 1 läuft unverändert
     weiter. Version 2 bietet dieselben Summen und zusätzlich das Buchungsprotokoll
     /v2/analytics/me/bookings, in dem jede einzelne Buchung eines Kunden steht, und den
-    Monatsbericht als PDF unter /v2/analytics/me/reports.
+    Monatsbericht als PDF unter /v2/analytics/me/reports, den Jahresauszug unter
+    /v2/analytics/me/annual-reports und ein Monatsbudget mit Warnungen unter
+    /v2/analytics/me/budget.
 
     Woher die Buchungen kommen: der Dienst liest sie mit dem Token des Kunden beim Auszugsdienst
     der Bank, GET /v2/statements/bookings (contracts/statements/openapi.v2.yaml, ab 2.1.0). Dafür
@@ -42,7 +44,9 @@ tags:
   - name: analytics
     description: Summen und Buchungsprotokoll
   - name: reports
-    description: Monatsberichte als PDF, beantragt und asynchron erzeugt
+    description: Monatsberichte und Jahresauszüge als PDF, beantragt und asynchron erzeugt
+  - name: budget
+    description: Monatsbudget für Ausgaben und Warnungen bei 80 und 100 Prozent
   - name: operations
     description: Betrieb
 
@@ -179,6 +183,131 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /v2/analytics/me/annual-reports:
+    post:
+      tags: [reports]
+      operationId: requestMyAnnualReport
+      summary: Jahresauszug als PDF beantragen
+      description: |
+        Wie der Monatsbericht, aber für ein ganzes Kalenderjahr (UTC): jede Buchung des Jahres
+        und die Summen je Währung. Das laufende Jahr ist erlaubt und zeigt alles bis heute; ein
+        Jahr in der Zukunft ergibt 400.
+
+        Vor der Antwort liest der Dienst die Buchungen des Jahres mit dem Token des Kunden bei
+        der Bank (braucht statements:read, from = 1. Januar, to = 1. Januar des Folgejahres) und
+        speichert sie mit dem Antrag und dem Ereignis annual-report.requested in einer
+        Transaktion. Erzeugt wird das PDF vom Konsumenten der eigenen Queue
+        analytics.annual-reports (contracts/analytics/events.asyncapi.v1.yaml). Den Fortschritt
+        zeigt GET auf die Adresse im Kopf Location, wie beim Monatsbericht.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnnualReportRequest'
+      responses:
+        '202':
+          description: Angenommen, das PDF wird erzeugt
+          headers:
+            Location:
+              description: Adresse des Berichts, dort steht der Status
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/BankUnavailable'
+
+  /v2/analytics/me/budget:
+    get:
+      tags: [budget]
+      operationId: getMyBudget
+      summary: Eigenes Budget und Stand im laufenden Monat
+      description: |
+        Das Budget des Inhabers aus dem sub-Claim, die Ausgaben des laufenden Monats und die
+        Warnungen dieses Monats. Die Warnungen legt der Konsument der eigenen Queue
+        analytics.budgets an, sobald nach einem Abgleich mit der Bank 80 oder 100 Prozent
+        erreicht sind; sie erscheinen deshalb einen Moment nach den Buchungen. Braucht im Token
+        zusätzlich statements:read.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Budget und Stand
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Budget'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NoBudget'
+    put:
+      tags: [budget]
+      operationId: setMyBudget
+      summary: Budget festlegen oder ändern
+      description: |
+        Legt das Monatsbudget für Ausgaben an oder ändert es; es gilt für jeden Monat, bis es
+        geändert oder gelöscht wird. Danach wird der laufende Monat sofort im Hintergrund
+        geprüft (budget.check.requested). Braucht im Token zusätzlich statements:read.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BudgetRequest'
+      responses:
+        '200':
+          description: Das gespeicherte Budget mit dem Stand des Monats
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Budget'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [budget]
+      operationId: deleteMyBudget
+      summary: Budget löschen
+      description: Danach gibt es keine Warnungen mehr.
+      security:
+        - keycloak: [analytics:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Gelöscht
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NoBudget'
 
   /v2/analytics/me/reports/{reportId}:
     get:
@@ -445,24 +574,117 @@ components:
           maximum: 12
           example: 9
 
-    Report:
+    AnnualReportRequest:
       type: object
-      description: |
-        Ein beantragter Monatsbericht. status ist requested, solange das PDF erzeugt wird,
-        danach ready mit bookingCount oder failed mit failure. Ein abgeschlossener Bericht
-        ändert sich nie wieder.
-      required: [reportId, year, month, status, requestedAt]
+      required: [year]
       additionalProperties: false
       properties:
-        reportId:
-          type: string
-          format: uuid
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+          example: 2026
+
+    BudgetRequest:
+      type: object
+      required: [currency, monthlyLimit]
+      additionalProperties: false
+      properties:
+        currency:
+          $ref: '#/components/schemas/Currency'
+        monthlyLimit:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 1000000
+          example: 2000
+
+    Budget:
+      type: object
+      description: |
+        Das Budget für die Ausgaben eines Monats und wie weit es im laufenden Monat (UTC)
+        ausgeschöpft ist. Ausgaben sind Auszahlungen und ausgehende Überweisungen in der Währung
+        des Budgets, gerechnet aus den Buchungen von der Bank. level ist ok unter 80 Prozent,
+        warning ab 80 und exceeded ab 100 Prozent.
+      required: [currency, monthlyLimit, year, month, spent, percent, level, alerts]
+      additionalProperties: false
+      properties:
+        currency:
+          $ref: '#/components/schemas/Currency'
+        monthlyLimit:
+          type: number
+          format: decimal
         year:
           type: integer
         month:
           type: integer
           minimum: 1
           maximum: 12
+        spent:
+          type: number
+          format: decimal
+          minimum: 0
+        percent:
+          type: integer
+          minimum: 0
+          description: Ausgaben in Prozent des Budgets, abgerundet
+        level:
+          $ref: '#/components/schemas/BudgetLevel'
+        alerts:
+          type: array
+          description: Die Warnungen dieses Monats, älteste zuerst; je Stufe höchstens eine
+          items:
+            $ref: '#/components/schemas/BudgetAlert'
+
+    BudgetLevel:
+      type: string
+      enum: [ok, warning, exceeded]
+
+    BudgetAlert:
+      type: object
+      required: [level, spent, monthlyLimit, currency, raisedAt]
+      additionalProperties: false
+      properties:
+        level:
+          type: string
+          enum: [warning, exceeded]
+        spent:
+          type: number
+          format: decimal
+          description: Ausgaben im Moment der Warnung
+        monthlyLimit:
+          type: number
+          format: decimal
+        currency:
+          $ref: '#/components/schemas/Currency'
+        raisedAt:
+          type: string
+          format: date-time
+
+    Report:
+      type: object
+      description: |
+        Ein beantragter Bericht: ein Monatsbericht (kind monthly) oder ein Jahresauszug (kind
+        annual, dann ohne month). status ist requested, solange das PDF erzeugt wird, danach
+        ready mit bookingCount oder failed mit failure. Ein abgeschlossener Bericht ändert sich
+        nie wieder.
+      required: [reportId, kind, year, status, requestedAt]
+      additionalProperties: false
+      properties:
+        reportId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [monthly, annual]
+        year:
+          type: integer
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+          nullable: true
+          description: Fehlt beim Jahresauszug
         status:
           type: string
           enum: [requested, ready, failed]
@@ -586,6 +808,13 @@ components:
   responses:
     BadRequest:
       description: Die Eingabe ist ungültig, etwa from nach to, ein zu langer Zeitraum oder ein Jahr ausserhalb des erlaubten Bereichs
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    NoBudget:
+      description: Für diesen Kunden ist kein Budget festgelegt
       content:
         application/problem+json:
           schema:

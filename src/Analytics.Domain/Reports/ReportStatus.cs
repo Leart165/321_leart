@@ -1,6 +1,6 @@
 namespace Analytics.Domain.Reports;
 
-// Zustand eines Monatsberichts. Erlaubt sind genau zwei Übergänge, beide von Requested aus;
+// Zustand eines Berichts. Erlaubt sind genau zwei Übergänge, beide von Requested aus;
 // ein abgeschlossener Bericht ändert sich nie wieder. Wie der Überweisungsauftrag der Bank.
 //
 //   Requested ──► Ready
