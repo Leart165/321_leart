@@ -7,7 +7,8 @@ using System.Text.Json;
 
 namespace Analytics.Infrastructure.Outbox;
 
-// Schreibt report.requested in die Outbox, im selben DbContext wie den Bericht. Publiziert wird
+// Schreibt report.requested oder annual-report.requested in die Outbox, im selben DbContext wie
+// den Bericht. Publiziert wird
 // erst, wenn beides gespeichert ist; vorher weiss der Broker nichts davon.
 public sealed class OutboxReportEvents : IReportEvents
 {
@@ -25,13 +26,21 @@ public sealed class OutboxReportEvents : IReportEvents
     public void ReportRequested(MonthlyReport report, string correlationId)
     {
         ReportPeriod period = report.Period;
-        string payload = JsonSerializer.Serialize(
-            new ReportRequestedPayload(report.Id, period.Year, period.Month, report.RequestedAt),
-            SerializerOptions);
+
+        // Der Jahresauszug geht an seine eigene Queue: anderes Ereignis, anderer Routing Key.
+        (string routingKey, string type, string payload) = period.IsYear
+            ? (ReportTopology.AnnualReportRequestedRoutingKey,
+                ReportTopology.AnnualReportRequestedType,
+                JsonSerializer.Serialize(
+                    new AnnualReportRequestedPayload(report.Id, period.Year, report.RequestedAt), SerializerOptions))
+            : (ReportTopology.ReportRequestedRoutingKey,
+                ReportTopology.ReportRequestedType,
+                JsonSerializer.Serialize(
+                    new ReportRequestedPayload(report.Id, period.Year, period.Month!.Value, report.RequestedAt), SerializerOptions));
 
         _context.Outbox.Add(OutboxMessage.Create(
-            ReportTopology.ReportRequestedRoutingKey,
-            ReportTopology.ReportRequestedType,
+            routingKey,
+            type,
             SchemaVersion,
             correlationId,
             Activity.Current?.Id,

@@ -24,6 +24,7 @@ builder.Services.AddReportProcessing();
 // weiterreichen, dann Zeitlimit, Wiederholung und Kreis.
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddTransient<ForwardHeadersHandler>();
+builder.Services.AddScoped<BudgetTrigger>();
 builder.Services.AddBankStatements(builder.Configuration)
     .AddHttpMessageHandler<ForwardHeadersHandler>()
     .AddBankResilienceHandler();

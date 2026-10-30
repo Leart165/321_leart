@@ -44,11 +44,11 @@ public sealed class CustomerLedger
             }
 
             IReadOnlyList<BookingEntry> stored = await _log.GetForOwnerAsync(ownerId, from, to, int.MaxValue, cancellationToken);
-            return new LedgerSnapshot(stored, BookingSource.Stored);
+            return new LedgerSnapshot(stored, BookingSource.Stored, 0);
         }
 
-        await _store.TryRememberAsync(ownerId, live.ToList(), cancellationToken);
-        return new LedgerSnapshot(live, BookingSource.Live);
+        int newBookings = await _store.TryRememberAsync(ownerId, live.ToList(), cancellationToken);
+        return new LedgerSnapshot(live, BookingSource.Live, newBookings);
     }
 
     public async Task<MonthlyOverview> GetMonthlyAsync(
@@ -62,7 +62,7 @@ public sealed class CustomerLedger
 
         IReadOnlyList<MonthlyTotal> months = LedgerTotals.Monthly(
             snapshot.Bookings.Select(entry => entry.ToTransaction(ownerId)));
-        return new MonthlyOverview(months, snapshot.Source);
+        return new MonthlyOverview(months, snapshot.Source, snapshot.NewBookings);
     }
 
     // Nur frisch von der Bank, ohne gespeicherten Stand. Zeitraum halboffen in UTC.

@@ -645,7 +645,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Nachrichten in den Queues",
-      "description": "analytics.reports am eigenen Broker. Steigt, wenn kein Konsument läuft, und fällt, wenn er zurück ist.",
+      "description": "analytics.reports (Monatsbericht), analytics.annual-reports (Jahresauszug) und analytics.budgets (Budgetprüfung) am eigenen Broker. Steigt, wenn kein Konsument läuft, und fällt, wenn er zurück ist.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -757,7 +757,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Unbestätigte Nachrichten",
-      "description": "Ein Konsument hat sie, aber noch kein ack geschickt: das PDF entsteht gerade.",
+      "description": "Ein Konsument hat sie, aber noch kein ack geschickt: das PDF entsteht gerade oder das Budget wird geprüft.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -813,7 +813,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "Empfangene Nachrichten je Ergebnis",
-      "description": "processed: Bericht erzeugt oder gescheitert. duplicate: schon erledigt, nur bestätigt. retried: wird wiederholt. dead_lettered: in die Dead-Letter-Queue. Pro Sekunde.",
+      "description": "processed: Bericht erzeugt oder gescheitert, Budgetwarnung angelegt. duplicate: schon erledigt oder keine neue Stufe, nur bestätigt. retried: wird wiederholt. dead_lettered: in die Dead-Letter-Queue. Pro Sekunde.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

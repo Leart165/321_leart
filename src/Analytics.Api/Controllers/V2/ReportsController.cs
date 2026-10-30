@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Analytics.Api.Controllers.V2;
 
-// Monatsberichte als PDF beantragen, verfolgen und abholen. Wie die Überweisung der Bank: der
+// Monatsberichte und Jahresauszüge als PDF beantragen, verfolgen und abholen. Wie die Überweisung der Bank: der
 // Antrag wird angenommen und sofort mit 202 beantwortet, erzeugt wird über den Exchange
 // analytics.events und die Queue analytics.reports am eigenen Broker. Die Buchungen des Monats
 // holt der Antrag vorher mit dem Token des Kunden bei der Bank. Siehe
@@ -48,6 +48,33 @@ public sealed class ReportsController : ControllerBase
                 User.HasConsentedToBankBookings(),
                 request.Year!.Value,
                 request.Month!.Value,
+                CorrelationId.Of(HttpContext),
+                cancellationToken);
+            return AcceptedAtRoute(GetRouteName, new { reportId = report.Id }, ReportDto.From(report));
+        }
+        catch (InvalidReportRequestException exception)
+        {
+            return Problem(StatusCodes.Status400BadRequest, "Eingabe ungültig", exception.Message);
+        }
+    }
+
+    // Der Jahresauszug: alle Buchungen eines Kalenderjahres, eigene Queue analytics.annual-reports.
+    // Das laufende Jahr geht, dann bis heute.
+    [HttpPost("/v2/analytics/me/annual-reports")]
+    [Consumes("application/json")]
+    [ProducesResponseType<ReportDto>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<ActionResult<ReportDto>> RequestAnnualAsync([FromBody] AnnualReportRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            MonthlyReport report = await _reports.RequestAnnualAsync(
+                User.OwnerId(),
+                User.HasConsentedToBankBookings(),
+                request.Year!.Value,
                 CorrelationId.Of(HttpContext),
                 cancellationToken);
             return AcceptedAtRoute(GetRouteName, new { reportId = report.Id }, ReportDto.From(report));

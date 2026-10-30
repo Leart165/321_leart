@@ -46,7 +46,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using AnalyticsDbContext context = CreateContext();
         await context.Database.ExecuteSqlRawAsync(
-            "TRUNCATE owner_bookings, outbox, report_documents, monthly_reports");
+            "TRUNCATE owner_bookings, outbox, report_documents, monthly_reports, budget_alerts, budgets");
     }
 
     public async Task DisposeAsync()

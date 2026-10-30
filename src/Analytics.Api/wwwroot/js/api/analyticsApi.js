@@ -32,8 +32,26 @@ export class AnalyticsApi {
     return this.#send("POST", "v2/analytics/me/reports", { body: { year, month } });
   }
 
+  // Jahresauszug beantragen, eigene Queue analytics.annual-reports.
+  requestAnnualReport(year) {
+    return this.#send("POST", "v2/analytics/me/annual-reports", { body: { year } });
+  }
+
   reports() {
     return this.#get("v2/analytics/me/reports");
+  }
+
+  // Budget und Stand im laufenden Monat; 404, wenn keines festgelegt ist.
+  budget() {
+    return this.#get("v2/analytics/me/budget");
+  }
+
+  setBudget(currency, monthlyLimit) {
+    return this.#send("PUT", "v2/analytics/me/budget", { body: { currency, monthlyLimit } });
+  }
+
+  deleteBudget() {
+    return this.#send("DELETE", "v2/analytics/me/budget");
   }
 
   report(reportId) {
@@ -93,6 +111,9 @@ export class AnalyticsApi {
     });
 
     if (response.ok) {
+      if (response.status === 204) {
+        return null;
+      }
       return blob ? response.blob() : response.json();
     }
 

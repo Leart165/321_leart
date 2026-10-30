@@ -2,18 +2,20 @@ using Analytics.Domain.Exceptions;
 
 namespace Analytics.Domain.Reports;
 
-// Ein beantragter Monatsbericht als PDF. Eigenes Aggregat: er hält, was beantragt wurde und wie
-// es ausgegangen ist, nicht das PDF selbst.
+// Ein beantragter Bericht als PDF: ein Monatsbericht oder, wenn der Zeitraum ein ganzes Jahr ist,
+// ein Jahresauszug. Eigenes Aggregat: er hält, was beantragt wurde und wie es ausgegangen ist,
+// nicht das PDF selbst.
 //
 // Die API legt ihn im Zustand Requested an und antwortet sofort mit 202. Erzeugt wird das PDF
-// danach vom Konsumenten der Queue analytics.reports; erst er setzt Ready oder Failed.
+// danach vom Konsumenten der Queue analytics.reports oder, beim Jahresauszug,
+// analytics.annual-reports; erst er setzt Ready oder Failed.
 public sealed class MonthlyReport
 {
     private const int MaxOwnerIdLength = 100;
     private const int MaxFailureLength = 500;
 
     private int _year;
-    private int _month;
+    private int? _month;
 
     // Nur für EF Core. Die Felder werden unmittelbar danach gesetzt.
     private MonthlyReport()
@@ -48,7 +50,7 @@ public sealed class MonthlyReport
 
     public ReportPeriod Period
     {
-        get { return ReportPeriod.Of(_year, _month); }
+        get { return ReportPeriod.Restore(_year, _month); }
     }
 
     public ReportStatus Status { get; private set; }
@@ -74,7 +76,7 @@ public sealed class MonthlyReport
 
         if (string.IsNullOrWhiteSpace(ownerId))
         {
-            throw new InvalidReportRequestException("Ein Monatsbericht braucht einen Inhaber.");
+            throw new InvalidReportRequestException("Ein Bericht braucht einen Inhaber.");
         }
 
         string trimmedOwnerId = ownerId.Trim();
@@ -83,11 +85,13 @@ public sealed class MonthlyReport
             throw new InvalidReportRequestException($"Die ownerId darf höchstens {MaxOwnerIdLength} Zeichen haben.");
         }
 
-        // Ein Monat, der noch nicht begonnen hat, hat keine Buchungen.
+        // Ein Zeitraum, der noch nicht begonnen hat, hat keine Buchungen. Das laufende Jahr ist
+        // erlaubt: der Jahresauszug zeigt dann alles bis heute.
         DateOnly today = DateOnly.FromDateTime(requestedAt.UtcDateTime);
         if (period.FirstDay > today)
         {
-            throw new InvalidReportRequestException($"Der Monat {period} liegt in der Zukunft.");
+            string what = period.IsYear ? "Das Jahr" : "Der Monat";
+            throw new InvalidReportRequestException($"{what} {period} liegt in der Zukunft.");
         }
 
         return new MonthlyReport(

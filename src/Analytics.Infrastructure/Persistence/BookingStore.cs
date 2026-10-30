@@ -38,13 +38,12 @@ public sealed class BookingStore : IBookingStore
         }));
     }
 
-    public async Task<bool> TryRememberAsync(string ownerId, IReadOnlyCollection<BookingEntry> bookings, CancellationToken cancellationToken)
+    public async Task<int> TryRememberAsync(string ownerId, IReadOnlyCollection<BookingEntry> bookings, CancellationToken cancellationToken)
     {
         Stage(ownerId, bookings);
         try
         {
-            await FlushAsync(cancellationToken);
-            return true;
+            return await FlushAsync(cancellationToken);
         }
         catch (Exception exception) when (DatabaseFailures.IsTransient(exception))
         {
@@ -52,7 +51,7 @@ public sealed class BookingStore : IBookingStore
             _logger.LogWarning(
                 "Buchungen von {Owner} nicht gespeichert, die Datenbank ist nicht erreichbar ({Error}).",
                 ownerId, exception.GetBaseException().Message);
-            return false;
+            return 0;
         }
     }
 
@@ -62,6 +61,8 @@ public sealed class BookingStore : IBookingStore
         {
             int removed = await _context.Database.ExecuteSqlAsync(
                 $"DELETE FROM owner_bookings WHERE owner_id = {ownerId}", cancellationToken);
+            await _context.Database.ExecuteSqlAsync(
+                $"DELETE FROM budget_alerts WHERE owner_id = {ownerId}", cancellationToken);
             if (removed > 0)
             {
                 _logger.LogInformation(
@@ -84,13 +85,14 @@ public sealed class BookingStore : IBookingStore
         return _context.OwnerBookings.AnyAsync(booking => booking.OwnerId == ownerId, cancellationToken);
     }
 
-    // Schreibt das Vorgemerkte. Eine einzige Anweisung, also für sich schon ganz oder gar nicht;
-    // in UnitOfWork läuft sie zusammen mit SaveChanges in einer Transaktion.
-    internal async Task FlushAsync(CancellationToken cancellationToken)
+    // Schreibt das Vorgemerkte und gibt zurück, wie viele Buchungen neu waren. Eine einzige
+    // Anweisung, also für sich schon ganz oder gar nicht; in UnitOfWork läuft sie zusammen mit
+    // SaveChanges in einer Transaktion.
+    internal async Task<int> FlushAsync(CancellationToken cancellationToken)
     {
         if (_staged.Count == 0)
         {
-            return;
+            return 0;
         }
 
         Guid[] ids = _staged.Select(booking => booking.TransactionId).ToArray();
@@ -101,7 +103,7 @@ public sealed class BookingStore : IBookingStore
         DateTimeOffset[] bookedAt = _staged.Select(booking => booking.BookedAt).ToArray();
         _staged.Clear();
 
-        await _context.Database.ExecuteSqlAsync(
+        return await _context.Database.ExecuteSqlAsync(
             $@"INSERT INTO owner_bookings (transaction_id, owner_id, kind, amount, currency, booked_at)
                SELECT * FROM unnest({ids}, {owners}, {kinds}, {amounts}, {currencies}, {bookedAt})
                ON CONFLICT (transaction_id) DO NOTHING",

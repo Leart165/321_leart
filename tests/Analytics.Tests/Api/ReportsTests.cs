@@ -144,6 +144,40 @@ public sealed class ReportsTests : IClassFixture<PostgresFixture>, IAsyncLifetim
     }
 
     [Fact]
+    public async Task An_annual_statement_is_accepted_with_202_and_listed_with_the_reports()
+    {
+        HttpClient client = _api.ClientWith(_tokens.Customer());
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/v2/analytics/me/annual-reports", new { year = 2025 });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        JsonElement report = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("annual", report.GetProperty("kind").GetString());
+        Assert.Equal(2025, report.GetProperty("year").GetInt32());
+        Assert.Equal(JsonValueKind.Null, report.GetProperty("month").ValueKind);
+        BankCall call = Assert.Single(_api.Bank.Calls);
+        Assert.StartsWith("2025-01-01T00:00:00", call.From);
+        Assert.StartsWith("2026-01-01T00:00:00", call.To);
+
+        JsonElement[] reports = await client.GetFromJsonAsync<JsonElement[]>(Reports) ?? Array.Empty<JsonElement>();
+        Assert.Equal("annual", Assert.Single(reports).GetProperty("kind").GetString());
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"year\":1999}")]
+    [InlineData("{\"year\":2099}")]
+    public async Task An_invalid_or_future_year_is_a_bad_request(string body)
+    {
+        HttpResponseMessage response = await _api.ClientWith(_tokens.Customer()).PostAsync(
+            "/v2/analytics/me/annual-reports", new StringContent(body, System.Text.Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await using AnalyticsDbContext context = _postgres.CreateContext();
+        Assert.Equal(0, await context.Outbox.CountAsync());
+    }
+
+    [Fact]
     public async Task Without_consent_for_the_bank_no_report_is_requested()
     {
         string token = _tokens.Issue(new TokenSpec { Scope = "openid analytics:read" });

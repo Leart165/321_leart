@@ -2,13 +2,14 @@ using Analytics.Domain.Exceptions;
 
 namespace Analytics.Domain.Reports;
 
-// Ein Kalendermonat in UTC, wie die Summen und das Buchungsprotokoll.
+// Der Zeitraum eines Berichts in UTC, wie die Summen und das Buchungsprotokoll: ein Kalendermonat
+// für den Monatsbericht oder ein ganzes Kalenderjahr für den Jahresauszug.
 public sealed record ReportPeriod
 {
     public const int MinYear = 2000;
     public const int MaxYear = 2100;
 
-    private ReportPeriod(int year, int month)
+    private ReportPeriod(int year, int? month)
     {
         Year = year;
         Month = month;
@@ -16,24 +17,27 @@ public sealed record ReportPeriod
 
     public int Year { get; }
 
-    public int Month { get; }
+    // Fehlt beim Jahresauszug.
+    public int? Month { get; }
+
+    public bool IsYear
+    {
+        get { return Month is null; }
+    }
 
     public DateOnly FirstDay
     {
-        get { return new DateOnly(Year, Month, 1); }
+        get { return new DateOnly(Year, Month ?? 1, 1); }
     }
 
     public DateOnly LastDay
     {
-        get { return FirstDay.AddMonths(1).AddDays(-1); }
+        get { return IsYear ? new DateOnly(Year, 12, 31) : FirstDay.AddMonths(1).AddDays(-1); }
     }
 
     public static ReportPeriod Of(int year, int month)
     {
-        if (year < MinYear || year > MaxYear)
-        {
-            throw new InvalidReportRequestException($"Das Jahr muss zwischen {MinYear} und {MaxYear} liegen.");
-        }
+        CheckYear(year);
 
         if (month < 1 || month > 12)
         {
@@ -43,8 +47,28 @@ public sealed record ReportPeriod
         return new ReportPeriod(year, month);
     }
 
+    public static ReportPeriod OfYear(int year)
+    {
+        CheckYear(year);
+        return new ReportPeriod(year, null);
+    }
+
+    // Wie in der Datenbank gespeichert: ein Jahr hat keinen Monat.
+    public static ReportPeriod Restore(int year, int? month)
+    {
+        return month is null ? OfYear(year) : Of(year, month.Value);
+    }
+
     public override string ToString()
     {
-        return $"{Year:D4}-{Month:D2}";
+        return IsYear ? $"{Year:D4}" : $"{Year:D4}-{Month:D2}";
+    }
+
+    private static void CheckYear(int year)
+    {
+        if (year < MinYear || year > MaxYear)
+        {
+            throw new InvalidReportRequestException($"Das Jahr muss zwischen {MinYear} und {MaxYear} liegen.");
+        }
     }
 }

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  defaultReportMonth, isPending, mergeReport, monthName, parseMonth, reportFileName, reportMonths, statusLabel
+  defaultReportMonth, defaultReportYear, isPending, mergeReport, monthName, parseMonth, reportFileName, reportMonths, reportTitle,
+  reportYears, statusLabel
 } from "../../src/Analytics.Api/wwwroot/js/domain/reports.js";
 
 test("Wählbar sind die letzten zwölf Monate bis zum laufenden, neueste zuerst", () => {
@@ -41,4 +42,18 @@ test("Name und Datei des Berichts", () => {
   assert.equal(monthName(2026, 9), "September 2026");
   assert.equal(monthName(2026, 3), "März 2026");
   assert.equal(reportFileName({ year: 2026, month: 9 }), "buchungen-2026-09.pdf");
+});
+
+test("Ein Jahresauszug heisst nach dem Jahr, ein Monatsbericht nach dem Monat", () => {
+  assert.equal(reportTitle({ kind: "annual", year: 2025, month: null }), "Jahresauszug 2025");
+  assert.equal(reportTitle({ kind: "monthly", year: 2026, month: 9 }), monthName(2026, 9));
+  assert.equal(reportFileName({ kind: "annual", year: 2025, month: null }), "jahresauszug-2025.pdf");
+  assert.equal(reportFileName({ kind: "monthly", year: 2026, month: 9 }), "buchungen-2026-09.pdf");
+});
+
+test("Wählbar sind das laufende Jahr und die vier davor, vorgewählt das letzte abgeschlossene", () => {
+  const years = reportYears(new Date(2026, 9, 30));
+  assert.deepEqual(years.map((year) => year.value), ["2026", "2025", "2024", "2023", "2022"]);
+  assert.equal(defaultReportYear(new Date(2026, 9, 30)), "2025");
+  assert.equal(defaultReportYear(new Date(2027, 0, 1)), "2026");
 });

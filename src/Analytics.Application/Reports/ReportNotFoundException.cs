@@ -5,7 +5,7 @@ namespace Analytics.Application.Reports;
 public sealed class ReportNotFoundException : Exception
 {
     public ReportNotFoundException(Guid reportId)
-        : base($"Den Monatsbericht {reportId} gibt es nicht.")
+        : base($"Den Bericht {reportId} gibt es nicht.")
     {
         ReportId = reportId;
     }

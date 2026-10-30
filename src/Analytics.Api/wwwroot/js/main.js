@@ -1,7 +1,9 @@
 import { AnalyticsApi } from "./api/analyticsApi.js";
 import { KeycloakLogin, LoginError } from "./auth/keycloak.js";
 import { Session, clearSession, loadSession, saveSession } from "./auth/session.js";
+import { ApiError } from "./api/analyticsApi.js";
 import { monthRange } from "./domain/bookings.js";
+import { needsWarning, warningText } from "./domain/budget.js";
 import { createBankDailyView } from "./views/bankDailyView.js";
 import { createBookingsView } from "./views/bookingsView.js";
 import { notice } from "./views/components.js";
@@ -12,8 +14,9 @@ const view = document.getElementById("view");
 const sessionArea = document.getElementById("session");
 const tabs = document.getElementById("tabs");
 const statusbar = document.getElementById("statusbar");
+const budgetAlert = document.getElementById("budget-alert");
 
-const app = { config: null, keycloak: null, session: null, api: null, refreshTimer: null, lastRequest: null };
+const app = { config: null, keycloak: null, session: null, api: null, refreshTimer: null, lastRequest: null, budgetTimer: null };
 
 start();
 
@@ -59,6 +62,9 @@ function signIn(session) {
   renderSession();
   renderTabs();
   route();
+  refreshBudget();
+  clearInterval(app.budgetTimer);
+  app.budgetTimer = setInterval(refreshBudget, 60_000);
 }
 
 function signOut() {
@@ -66,6 +72,7 @@ function signOut() {
   clearSession();
   app.session = null;
   clearTimeout(app.refreshTimer);
+  stopBudget();
   if (session?.source === "keycloak") {
     app.keycloak.logout(session);
   } else {
@@ -97,6 +104,7 @@ function reconsent() {
 function expired() {
   clearSession();
   app.session = null;
+  stopBudget();
   showSignedOut(new LoginError("Die Anmeldung ist abgelaufen. Bitte erneut anmelden."));
 }
 
@@ -122,7 +130,9 @@ function createScreen(wanted, parameters) {
     case "bookings":
       return createBookingsView({ api: app.api, range: rangeFrom(parameters), onUnauthorized: expired, onReconsent: reconsent });
     default:
-      return createOverviewView({ api: app.api, session: app.session, onUnauthorized: expired, onReconsent: reconsent });
+      return createOverviewView({
+        api: app.api, session: app.session, onUnauthorized: expired, onReconsent: reconsent, onBudget: showBudgetWarning
+      });
   }
 }
 
@@ -192,6 +202,41 @@ function showSignedOut(error) {
               }
             }
           }, "Mit diesem Token weiter")))));
+}
+
+// Warnung oben auf jeder Seite, sobald 80 oder 100 Prozent des Monatsbudgets ausgegeben sind.
+// Die Stufe legt der Dienst im Hintergrund fest (Queue analytics.budgets); die Seite fragt jede Minute.
+async function refreshBudget() {
+  if (!app.api) {
+    return;
+  }
+  try {
+    showBudgetWarning(await app.api.budget());
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      showBudgetWarning(null);
+    }
+  }
+}
+
+function showBudgetWarning(budget) {
+  if (!needsWarning(budget)) {
+    budgetAlert.hidden = true;
+    replace(budgetAlert);
+    return;
+  }
+  budgetAlert.hidden = false;
+  budgetAlert.className = `budget-banner budget-banner--${budget.level}`;
+  replace(budgetAlert,
+    h("div", { class: "budget-banner__inner" },
+      h("strong", {}, budget.level === "exceeded" ? "Budget überschritten" : "Budget fast aufgebraucht"),
+      h("span", {}, warningText(budget)),
+      h("a", { href: "#/overview" }, "Zum Budget")));
+}
+
+function stopBudget() {
+  clearInterval(app.budgetTimer);
+  showBudgetWarning(null);
 }
 
 function rememberRequest(request) {

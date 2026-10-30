@@ -52,6 +52,16 @@ public sealed class BookingLogReaderTests : IClassFixture<PostgresFixture>, IAsy
         Assert.Single(await ReadAsync("kunde-1", "2026-09-01", "2026-09-30"));
     }
 
+    // Die Zahl der neuen Buchungen entscheidet, ob das Budget geprüft wird.
+    [Fact]
+    public async Task Remembering_tells_how_many_bookings_were_new()
+    {
+        BookingEntry booking = Booking("Deposit", 100m, "2026-09-17T09:30:00Z");
+
+        Assert.Equal(1, await RememberAsync("kunde-1", booking));
+        Assert.Equal(0, await RememberAsync("kunde-1", booking));
+    }
+
     [Fact]
     public async Task Only_the_own_bookings_inside_the_range_are_listed()
     {
@@ -99,11 +109,11 @@ public sealed class BookingLogReaderTests : IClassFixture<PostgresFixture>, IAsy
         Assert.Equal(1, await check.OwnerBookings.CountAsync());
     }
 
-    private async Task RememberAsync(string owner, BookingEntry booking)
+    private async Task<int> RememberAsync(string owner, BookingEntry booking)
     {
         await using AnalyticsDbContext context = _postgres.CreateContext();
-        Assert.True(await new BookingStore(context, NullLogger<BookingStore>.Instance)
-            .TryRememberAsync(owner, new[] { booking }, CancellationToken.None));
+        return await new BookingStore(context, NullLogger<BookingStore>.Instance)
+            .TryRememberAsync(owner, new[] { booking }, CancellationToken.None);
     }
 
     private async Task<IReadOnlyList<BookingEntry>> ReadAsync(string owner, string from, string to)

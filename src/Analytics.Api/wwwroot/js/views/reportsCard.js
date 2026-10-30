@@ -1,5 +1,7 @@
 import { ApiError } from "../api/analyticsApi.js";
-import { defaultReportMonth, isPending, mergeReport, monthName, parseMonth, reportFileName, reportMonths, statusLabel } from "../domain/reports.js";
+import {
+  defaultReportMonth, defaultReportYear, isPending, mergeReport, parseMonth, reportFileName, reportMonths, reportTitle, reportYears, statusLabel
+} from "../domain/reports.js";
 import { formatBookedAt } from "../domain/bookings.js";
 import { card, empty, notice, select, table } from "./components.js";
 import { describe } from "./overviewView.js";
@@ -8,15 +10,18 @@ import { h, replace } from "./dom.js";
 const POLL_MS = 1_000;
 const POLL_LIMIT = 60;
 
-// Monatsbericht als PDF: beantragen, warten, herunterladen. Die API antwortet auf den Antrag
-// sofort mit 202; das PDF entsteht im Hintergrund über den Exchange analytics.events. Solange ein
-// Bericht "Wird erstellt" ist, fragt die Seite jede Sekunde nach.
+// Monatsbericht und Jahresauszug als PDF: beantragen, warten, herunterladen. Die API antwortet auf
+// den Antrag sofort mit 202; das PDF entsteht im Hintergrund über den Exchange analytics.events,
+// der Monatsbericht in der Queue analytics.reports, der Jahresauszug in analytics.annual-reports.
+// Solange ein Bericht "Wird erstellt" ist, fragt die Seite jede Sekunde nach.
 export function createReportsCard({ api, onUnauthorized }) {
-  const state = { month: defaultReportMonth(), reports: [], busy: false, error: null, polls: 0, timer: null };
+  const state = {
+    month: defaultReportMonth(), year: defaultReportYear(), reports: [], busy: false, error: null, polls: 0, timer: null
+  };
 
   const body = h("div", { class: "stack" });
-  const element = card("Monatsbericht als PDF",
-    "Jede Buchung eines Monats und die Summen, zum Ablegen oder Ausdrucken. Der Bericht wird im Hintergrund erstellt.",
+  const element = card("Berichte als PDF",
+    "Jede Buchung eines Monats oder eines ganzen Jahres und die Summen, zum Ablegen oder für die Steuererklärung. Der Bericht wird im Hintergrund erstellt.",
     body);
 
   async function load() {
@@ -33,16 +38,26 @@ export function createReportsCard({ api, onUnauthorized }) {
     schedulePoll();
   }
 
-  async function request() {
+  function requestMonthly() {
     const wanted = parseMonth(state.month);
-    if (!wanted || state.busy) {
+    if (wanted) {
+      request(() => api.requestReport(wanted.year, wanted.month));
+    }
+  }
+
+  function requestAnnual() {
+    request(() => api.requestAnnualReport(Number(state.year)));
+  }
+
+  async function request(send) {
+    if (state.busy) {
       return;
     }
     state.busy = true;
     state.error = null;
     render();
     try {
-      const report = await api.requestReport(wanted.year, wanted.month);
+      const report = await send();
       state.reports = mergeReport(state.reports, report);
       state.polls = 0;
     } catch (error) {
@@ -111,17 +126,23 @@ export function createReportsCard({ api, onUnauthorized }) {
         select("Monat", reportMonths(), state.month, (value) => {
           state.month = value;
         }),
-        h("button", { type: "button", class: "button button--primary", disabled: state.busy, onClick: request },
-          state.busy ? "Wird beantragt …" : "Monatsbericht anfordern")),
-      state.error ? notice("error", "Monatsbericht nicht möglich", describe(state.error)) : null,
+        h("button", { type: "button", class: "button button--primary", disabled: state.busy, onClick: requestMonthly },
+          "Monatsbericht anfordern")),
+      h("div", { class: "report-request" },
+        select("Jahr", reportYears(), state.year, (value) => {
+          state.year = value;
+        }),
+        h("button", { type: "button", class: "button", disabled: state.busy, onClick: requestAnnual },
+          "Jahresauszug anfordern")),
+      state.error ? notice("error", "Bericht nicht möglich", describe(state.error)) : null,
       state.polls >= POLL_LIMIT && state.reports.some(isPending)
         ? notice("warning", "Dauert länger als erwartet", "Der Bericht wird erstellt, sobald der Dienst wieder Anträge verarbeitet. Seite später neu laden.")
         : null,
       state.reports.length === 0
-        ? empty("Noch kein Monatsbericht", "Monat wählen und anfordern.")
+        ? empty("Noch kein Bericht", "Monat oder Jahr wählen und anfordern.")
         : table(
           [
-            { label: "Monat", render: (row) => monthName(row.year, row.month) },
+            { label: "Zeitraum", render: (row) => reportTitle(row) },
             { label: "Beantragt", render: (row) => formatBookedAt(row.requestedAt) },
             { label: "Status", render: (row) => statusCell(row) },
             { label: "Buchungen", numeric: true, render: (row) => (row.bookingCount ?? "–") },

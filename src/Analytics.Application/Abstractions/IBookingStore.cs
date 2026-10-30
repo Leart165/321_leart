@@ -10,11 +10,13 @@ public interface IBookingStore
     // alles andere.
     void Stage(string ownerId, IEnumerable<BookingEntry> bookings);
 
-    // Sofort und in einem eigenen Vorgang. Ist die eigene Datenbank gerade weg, gibt es false
-    // zurück, statt zu werfen: das Speichern ist ein Vorrat, die Antwort hängt nicht daran.
-    Task<bool> TryRememberAsync(string ownerId, IReadOnlyCollection<BookingEntry> bookings, CancellationToken cancellationToken);
+    // Sofort und in einem eigenen Vorgang. Gibt zurück, wie viele Buchungen neu waren. Ist die
+    // eigene Datenbank gerade weg, gibt es 0 zurück, statt zu werfen: das Speichern ist ein
+    // Vorrat, die Antwort hängt nicht daran.
+    Task<int> TryRememberAsync(string ownerId, IReadOnlyCollection<BookingEntry> bookings, CancellationToken cancellationToken);
 
-    // Löscht alles, was von diesem Kunden gespeichert ist. Wie TryRememberAsync ohne zu werfen,
+    // Löscht alles, was von diesem Kunden aus Buchungen gespeichert ist, auch die Warnungen zum
+    // Budget; das Budget selbst ist eine Einstellung des Kunden und bleibt. Wie TryRememberAsync ohne zu werfen,
     // wenn die Datenbank weg ist; der nächste Aufruf ohne Zustimmung löscht dann.
     Task<bool> TryForgetAsync(string ownerId, CancellationToken cancellationToken);
 

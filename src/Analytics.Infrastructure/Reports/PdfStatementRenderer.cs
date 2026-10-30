@@ -6,7 +6,7 @@ using System.Globalization;
 
 namespace Analytics.Infrastructure.Reports;
 
-// Druckt einen Monatsbericht als PDF, schwarz auf weiss: Kopf, Summen je Währung, dann jede
+// Druckt einen Monatsbericht oder Jahresauszug als PDF, schwarz auf weiss: Kopf, Summen je Währung, dann jede
 // Buchung als Zeile wie auf einem Kontoauszug. Reicht eine Seite nicht, folgt die nächste mit
 // demselben Tabellenkopf.
 public sealed class PdfStatementRenderer : IStatementRenderer
@@ -87,7 +87,7 @@ public sealed class PdfStatementRenderer : IStatementRenderer
             }
         }
 
-        string title = $"Monatsbericht {MonthName(statement.Period)}";
+        string title = Title(statement.Period);
         for (int index = 0; index < pages.Count; index++)
         {
             WriteFooter(pages[index], statement, index + 1, pages.Count);
@@ -99,7 +99,7 @@ public sealed class PdfStatementRenderer : IStatementRenderer
     private static double WriteHeader(PdfCanvas page, MonthlyStatement statement)
     {
         double y = Top;
-        page.Text(Left, y, PdfFont.Bold, 18, $"Monatsbericht {MonthName(statement.Period)}");
+        page.Text(Left, y, PdfFont.Bold, 18, Title(statement.Period));
         y -= 16;
         page.Text(Left, y, PdfFont.Regular, Body, "Buchungsprotokoll der Analytics-Firma, im Auftrag der Bank");
         y -= 22;
@@ -177,7 +177,7 @@ public sealed class PdfStatementRenderer : IStatementRenderer
     private static void WriteFooter(PdfCanvas page, MonthlyStatement statement, int number, int count)
     {
         page.Line(Left, 42, Right, 42, 0.5, 0);
-        page.Text(Left, 30, PdfFont.Regular, Small, $"Analytics-Firma, Monatsbericht {statement.Period}, Buchungen von der Bank, mit Zustimmung des Kunden");
+        page.Text(Left, 30, PdfFont.Regular, Small, $"Analytics-Firma, {Title(statement.Period)}, Buchungen von der Bank, mit Zustimmung des Kunden");
         page.Text(Right - 50, 30, PdfFont.Regular, Small, $"Seite {number} von {count}");
     }
 
@@ -193,9 +193,20 @@ public sealed class PdfStatementRenderer : IStatementRenderer
         };
     }
 
+    // "Monatsbericht September 2026" oder "Jahresauszug 2026".
+    public static string Title(ReportPeriod period)
+    {
+        return period.IsYear ? $"Jahresauszug {period.Year}" : $"Monatsbericht {MonthName(period)}";
+    }
+
     public static string MonthName(ReportPeriod period)
     {
-        return $"{MonthNames[period.Month - 1]} {period.Year}";
+        if (period.IsYear)
+        {
+            return $"{period.Year}";
+        }
+
+        return $"{MonthNames[period.Month!.Value - 1]} {period.Year}";
     }
 
     public static string Signed(decimal amount)

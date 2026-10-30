@@ -1,6 +1,6 @@
 # Demo: Learts Teil
 
-Etwa acht Minuten. Alles läuft im Gesamtsystem aus `m321-main`; Befehle aus dessen Verzeichnis.
+Etwa zehn Minuten. Alles läuft im Gesamtsystem aus `m321-main`; Befehle aus dessen Verzeichnis.
 Vorher offen haben: den eigenen RabbitMQ (http://127.0.0.1:15674, Tab *Queues*), das eigene
 Grafana (http://127.0.0.1:3001, Ordner "Analytics": Logs, Metriken, Traces), das Grafana der Bank
 (http://127.0.0.1:3000) und die Statistikseite (http://localhost:8091/, der zweite Eingang von
@@ -69,7 +69,7 @@ docker compose -f docker-compose.yml -f ../override-port-8091.yml start statemen
 
 ## 5. Monatsbericht über den eigenen Broker (1.5 min)
 
-- Reiter "Buchungen", unten "Monatsbericht als PDF": Monat wählen, **Monatsbericht anfordern**.
+- Reiter "Buchungen", unten "Berichte als PDF": Monat wählen, **Monatsbericht anfordern**.
 - Die Zeile steht sofort da mit "Wird erstellt …": die API hat die Buchungen des Monats bei der
   Bank geholt und mit dem Antrag und einem Eintrag in der Outbox in *einer* Transaktion
   gespeichert, dann **202** geantwortet. Ein Token geht nie in die Queue.
@@ -78,20 +78,36 @@ docker compose -f docker-compose.yml -f ../override-port-8091.yml start statemen
   2 Consumers und `analytics.reports.dlq`. Dazu sagen: "Mein eigener Broker, nur im Netz partner.
   Die Bank kommt nicht daran, ich nicht an ihren." Im eigenen Dashboard "Konsumenten je Queue".
 
-## 6. Skalierung und eigener Ausfall (1 min)
+## 6. Jahresauszug und Budgetwarnung (2 min)
+
+- Reiter "Buchungen", unten "Berichte als PDF": Jahr wählen, **Jahresauszug anfordern**. Die Zeile
+  heisst "Jahresauszug 2025", nach etwa einer Sekunde **Herunterladen**: `jahresauszug-2025.pdf`.
+- Eigener RabbitMQ: `analytics.annual-reports` mit eigener DLQ. Dazu sagen: "Eine eigene Queue,
+  damit ein grosser Jahresauszug keinen Monatsbericht aufhält."
+- Reiter "Meine Übersicht", Karte "Monatsbudget": 100 eingeben, **Festlegen**. Der Balken zeigt,
+  wie viel diesen Monat schon ausgegeben ist.
+- Im Frontend der Bank 90 auszahlen, dann die Statistikseite neu laden. Der Dienst speichert die
+  neue Buchung, schickt `budget.check.requested` in `analytics.budgets`, der Konsument legt die
+  Warnung an. Oben erscheint "Budget fast aufgebraucht"; nach weiteren 20 "Budget überschritten".
+- Dazu sagen: "Die Anfrage wartet nicht auf die Prüfung. Jede Stufe kommt einmal im Monat, auch
+  wenn beide Instanzen gleichzeitig prüfen: dafür sorgt ein eindeutiger Index."
+- Mein Grafana, Explore, Loki: `{service="analytics-api"} |= "Budget"` zeigt "Warnung angelegt".
+
+## 7. Skalierung und eigener Ausfall (1 min)
 
 ```bash
 docker stop m321-analytics-api-1
 ```
 
 - Statistikseite neu laden: Traefik schickt alles an die zweite Instanz. Eigener RabbitMQ:
-  `analytics.reports` hat einen Consumer weniger, Berichte entstehen weiter.
+  `analytics.reports`, `analytics.annual-reports` und `analytics.budgets` haben je einen Consumer
+  weniger, Berichte und Warnungen entstehen weiter.
 
 ```bash
 docker start m321-analytics-api-1
 ```
 
-## 7. Expand and Contract über die Firmengrenze (1 min)
+## 8. Expand and Contract über die Firmengrenze (1 min)
 
 - **Expand**, Tim: `GET /v2/statements/bookings` in `statements/openapi.v2.yaml` 2.1.0, additiv.
 - **Migrate**, ich: Buchungen über HTTP, eigener Broker, der Konsument am Broker der Bank ist weg.

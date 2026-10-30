@@ -18,19 +18,22 @@ flowchart LR
 
     subgraph dienst["analytics-api ×2"]
         web["Statistikseite"]
-        api["GET /v1|v2 me/monthly<br/>GET /v2 me/bookings<br/>POST /v2 me/reports"]
+        api["GET /v1|v2 me/monthly<br/>GET /v2 me/bookings<br/>POST /v2 me/reports, me/annual-reports<br/>GET|PUT|DELETE /v2 me/budget"]
         outbox["Outbox-Dispatcher"]
-        pdf["Konsument Monatsbericht<br/>erzeugt das PDF"]
+        pdf["Konsumenten Monatsbericht<br/>und Jahresauszug<br/>erzeugen das PDF"]
+        budget["Konsument Budget<br/>legt Warnungen an"]
     end
 
     subgraph broker["analytics-rabbitmq, eigener Broker"]
         aev{{"analytics.events<br/>topic"}}
         reports["analytics.reports"]
+        annual["analytics.annual-reports"]
+        budgets["analytics.budgets"]
         dlx{{"analytics.dlx"}}
-        rdlq["analytics.reports.dlq"]
+        rdlq["je Queue eine .dlq"]
     end
 
-    db[("analyticsdb<br/>owner_bookings · monthly_reports<br/>report_documents · outbox")]
+    db[("analyticsdb<br/>owner_bookings · monthly_reports<br/>report_documents · budgets<br/>budget_alerts · outbox")]
 
     subgraph obs["eigene Observability"]
         alloy["analytics-alloy"]
@@ -46,9 +49,13 @@ flowchart LR
     traefik --> stmt
     api -->|"gelieferte Buchungen,<br/>ohne Doppelte"| db
     api -->|"Antrag + Buchungen + Outbox,<br/>eine Transaktion, 202"| db
-    db --> outbox -.->|"report.requested"| aev -.-> reports -.-> pdf
-    reports -.->|"kontraktwidrig"| dlx -.-> rdlq
+    db --> outbox -.->|"report.requested<br/>annual-report.requested<br/>budget.check.requested"| aev
+    aev -.-> reports -.-> pdf
+    aev -.-> annual -.-> pdf
+    aev -.-> budgets -.-> budget
+    reports & annual & budgets -.->|"kontraktwidrig"| dlx -.-> rdlq
     pdf -->|"PDF, Status ready"| db
+    budget -->|"Warnung bei 80 und 100 %"| db
     api -.->|"OTLP, Logs"| alloy --> store --> grafana
 ```
 
@@ -72,7 +79,10 @@ zur Statistikseite, und über ihn fragt der Dienst die Bank.
 | Bank weg, während ein Bericht beantragt wird | 503, kein halber Antrag bleibt liegen |
 | eigener Broker weg | der Antrag liegt in der Outbox und geht hinaus, sobald der Broker zurück ist |
 | derselbe Antrag kommt doppelt, auch auf beiden Instanzen gleichzeitig | ein PDF: der zweite Konsument merkt an `xmin` von Postgres, dass der Bericht schon fertig ist |
-| Nachricht passt nicht zum Kontrakt | ohne Wiederholung in `analytics.reports.dlq` |
+| Jahresauszug beantragt (`POST /v2/analytics/me/annual-reports`) | wie der Monatsbericht, aber die Buchungen des ganzen Jahres und die eigene Queue `analytics.annual-reports`; PDF "Jahresauszug 2025" |
+| Budget festgelegt (`PUT /v2/analytics/me/budget`) | gilt für jeden Monat; der laufende Monat wird gleich im Hintergrund geprüft |
+| neue Buchungen von der Bank gespeichert, Kunde hat ein Budget | Prüfung über `analytics.budgets`; ab 80 % eine Warnung, ab 100 % eine zweite, jede einmal im Monat, auch bei zwei Instanzen. Die Seite zeigt sie oben auf jeder Seite |
+| Nachricht passt nicht zum Kontrakt | ohne Wiederholung in die DLQ ihrer Queue, z. B. `analytics.reports.dlq` |
 
 ## Starten
 

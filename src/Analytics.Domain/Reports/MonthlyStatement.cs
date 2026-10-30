@@ -1,7 +1,8 @@
 namespace Analytics.Domain.Reports;
 
-// Inhalt eines Monatsberichts, unabhängig davon, wie er gedruckt wird: jede Buchung des Monats
-// in zeitlicher Reihenfolge, wie auf einem Kontoauszug, und die Summen je Währung.
+// Inhalt eines Berichts, unabhängig davon, wie er gedruckt wird: jede Buchung des Zeitraums, eines
+// Monats oder eines Jahres, in zeitlicher Reihenfolge wie auf einem Kontoauszug, und die Summen
+// je Währung.
 public sealed class MonthlyStatement
 {
     private MonthlyStatement(

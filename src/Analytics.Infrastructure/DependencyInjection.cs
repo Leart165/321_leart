@@ -1,4 +1,5 @@
 using Analytics.Application.Abstractions;
+using Analytics.Application.Budgets;
 using Analytics.Application.Ledger;
 using Analytics.Application.Reports;
 using Analytics.Infrastructure.Outbox;
@@ -38,6 +39,9 @@ public static class DependencyInjection
         services.AddScoped<IReportEvents, OutboxReportEvents>();
         services.AddSingleton<IStatementRenderer, PdfStatementRenderer>();
         services.AddScoped<ReportService>();
+        services.AddScoped<IBudgetRepository, BudgetRepository>();
+        services.AddScoped<IBudgetEvents, OutboxBudgetEvents>();
+        services.AddScoped<BudgetService>();
 
         services.Configure<MessagingOptions>(configuration.GetSection(MessagingOptions.SectionName));
         services.AddSingleton<RabbitMqConnection>();
@@ -51,14 +55,18 @@ public static class DependencyInjection
         return services;
     }
 
-    // Monatsberichte: die Outbox publiziert report.requested auf analytics.events, der Konsument
-    // der Queue analytics.reports erzeugt das PDF.
+    // Berichte: die Outbox publiziert report.requested und annual-report.requested auf
+    // analytics.events, die Konsumenten der Queues analytics.reports und analytics.annual-reports
+    // erzeugen das PDF.
     public static IServiceCollection AddReportProcessing(this IServiceCollection services)
     {
         services.TryAddSingleton(AsyncApiSchemas.FromEmbeddedContracts());
         services.AddScoped<ReportRequestedHandler>();
+        services.AddScoped<BudgetCheckHandler>();
         services.AddHostedService<OutboxDispatcher>();
         services.AddHostedService<ReportRequestedConsumer>();
+        services.AddHostedService<AnnualReportRequestedConsumer>();
+        services.AddHostedService<BudgetCheckConsumer>();
         return services;
     }
 

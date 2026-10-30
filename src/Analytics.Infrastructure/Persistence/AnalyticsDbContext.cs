@@ -1,3 +1,4 @@
+using Analytics.Domain.Budgets;
 using Analytics.Domain.Reports;
 using Analytics.Infrastructure.Outbox;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,16 @@ public sealed class AnalyticsDbContext : DbContext
     public DbSet<ReportDocumentRecord> ReportDocuments
     {
         get { return Set<ReportDocumentRecord>(); }
+    }
+
+    public DbSet<MonthlyBudget> Budgets
+    {
+        get { return Set<MonthlyBudget>(); }
+    }
+
+    public DbSet<BudgetAlert> BudgetAlerts
+    {
+        get { return Set<BudgetAlert>(); }
     }
 
     public DbSet<OutboxMessage> Outbox

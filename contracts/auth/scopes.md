@@ -25,7 +25,7 @@ Scope bringt die Audience seiner API mit: ein Token enthält nur die Dienste, f�
 | `accounts:write` | Konto eröffnen, einzahlen, abheben | `m321-accounts-api` | `POST /v2/accounts`, `POST /v2/accounts/{id}/deposits`, `POST /v2/accounts/{id}/withdrawals` |
 | `transfers:write` | Überweisungen von eigenen Konten beauftragen | `m321-accounts-api` | `POST /v2/transfers` |
 | `statements:read` | Kontoauszüge eigener Konten lesen | `m321-statements-api` | `GET /v2/statements/{id}`, `GET /v2/statements/bookings` (Buchungen aller eigenen Konten, ohne Buchungstext und Konto) |
-| `analytics:read` | Eigene Summen und Buchungen bei der Analytics-Firma lesen | `m321-analytics-api` | `GET /v1/analytics/me/monthly`, `GET /v2/analytics/me/monthly`, `GET /v2/analytics/me/bookings`, `POST /v2/analytics/me/reports`, `GET /v2/analytics/me/reports`, `GET /v2/analytics/me/reports/{reportId}`, `GET /v2/analytics/me/reports/{reportId}/document`; `GET /v1/analytics/system/daily` und `GET /v2/analytics/system/daily` zusätzlich nur mit Rolle `bank-admin` |
+| `analytics:read` | Eigene Summen und Buchungen bei der Analytics-Firma lesen | `m321-analytics-api` | `GET /v1/analytics/me/monthly`, `GET /v2/analytics/me/monthly`, `GET /v2/analytics/me/bookings`, `POST /v2/analytics/me/reports`, `POST /v2/analytics/me/annual-reports`, `GET /v2/analytics/me/budget`, `PUT /v2/analytics/me/budget`, `DELETE /v2/analytics/me/budget`, `GET /v2/analytics/me/reports`, `GET /v2/analytics/me/reports/{reportId}`, `GET /v2/analytics/me/reports/{reportId}/document`; `GET /v1/analytics/system/daily` und `GET /v2/analytics/system/daily` zusätzlich nur mit Rolle `bank-admin` |
 
 Version 1 der Bank-APIs verlangt kein Token und kennt deshalb keine Scopes. Sie ist abgelöst.
 
