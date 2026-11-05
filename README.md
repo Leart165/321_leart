@@ -12,7 +12,7 @@ flowchart LR
     kc["Keycloak der Bank<br/>Client analytics-web<br/>analytics:read, statements:read"]
 
     subgraph bank["Bank"]
-        traefik["Traefik<br/>Eingang :8080"]
+        traefik["Traefik<br/>Eingänge :8080, :8091"]
         stmt["statements-api<br/>GET /v2/statements/bookings"]
     end
 
@@ -42,7 +42,7 @@ flowchart LR
     end
 
     kunde -->|"Sign in with Bank, PKCE"| kc
-    kunde -->|"analytics.localhost:8080"| traefik
+    kunde -->|"localhost:8091"| traefik
     traefik --> web
     web -->|"Bearer, X-Correlation-Id"| api
     api -->|"Token des Kunden weitergereicht,<br/>Zeitlimit, Wiederholung, Kreis"| traefik
@@ -60,8 +60,25 @@ flowchart LR
 ```
 
 Durchgezogene Pfeile sind synchrone Aufrufe, gestrichelte Nachrichten über den eigenen Broker und
-die Daten für die eigene Observability. Traefik ist der gemeinsame Eingang: über ihn kommt der Kunde
-zur Statistikseite, und über ihn fragt der Dienst die Bank.
+die Daten für die eigene Observability. Traefik gehört zur Bank und ist der Eingang im Gesamtsystem:
+über ihn kommt der Kunde zur Statistikseite, und über ihn fragt der Dienst die Bank.
+
+## Zwei getrennte Firmen
+
+Bank und Analytics-Firma sahen zuerst aus wie eine Firma. Darum haben wir sie getrennt:
+
+| | Vorher: gefühlt eine Firma | Jetzt: zwei Firmen |
+|---|---|---|
+| Buchungen | Ereignis über den Broker der Bank, von allen Kunden | HTTP `GET /v2/statements/bookings` mit dem Token des Kunden, nur mit seiner Zustimmung |
+| RabbitMQ | ein Broker für beide, die Analytics-Firma mit eigenem Benutzer darauf | je einer: `m321-rabbitmq` für die Bank, `analytics-rabbitmq` für die Analytics-Firma |
+| Grafana, Loki, Tempo, Prometheus | ein Stack für beide | je einer: Bank auf `:3000`, Analytics-Firma auf `:3001` |
+| Logs | gemischt | getrennt, verbunden nur über Trace-Id und Korrelations-Id |
+| Berührungspunkte | Broker, Observability, Keycloak, Traefik | Keycloak und der HTTP-Aufruf über Traefik |
+
+RabbitMQ transportiert keine Buchungen mehr. Der eigene Broker trägt nur noch Aufträge an die
+eigenen Worker: Monatsbericht, Jahresauszug und Budgetprüfung.
+
+## Was in welchem Fall passiert
 
 | Fall | Was passiert |
 |---|---|
@@ -81,7 +98,7 @@ zur Statistikseite, und über ihn fragt der Dienst die Bank.
 | derselbe Antrag kommt doppelt, auch auf beiden Instanzen gleichzeitig | ein PDF: der zweite Konsument merkt an `xmin` von Postgres, dass der Bericht schon fertig ist |
 | Jahresauszug beantragt (`POST /v2/analytics/me/annual-reports`) | wie der Monatsbericht, aber die Buchungen des ganzen Jahres und die eigene Queue `analytics.annual-reports`; PDF "Jahresauszug 2025" |
 | Budget festgelegt (`PUT /v2/analytics/me/budget`) | gilt für jeden Monat; der laufende Monat wird gleich im Hintergrund geprüft |
-| neue Buchungen von der Bank gespeichert, Kunde hat ein Budget | Prüfung über `analytics.budgets`; ab 80 % eine Warnung, ab 100 % eine zweite, jede einmal im Monat, auch bei zwei Instanzen. Die Seite zeigt sie oben auf jeder Seite |
+| neue Buchungen von der Bank gespeichert, Kunde hat ein Budget | Prüfung über `analytics.budgets`; ab 80 % eine Warnung, ab 100 % eine zweite, jede einmal im Monat, auch bei zwei Instanzen. Die Karte "Monatsbudget" listet sie auf. Den Stand und den Hinweis oben auf der Seite rechnet die API direkt aus den gespeicherten Buchungen |
 | Nachricht passt nicht zum Kontrakt | ohne Wiederholung in die DLQ ihrer Queue, z. B. `analytics.reports.dlq` |
 
 ## Starten
@@ -148,5 +165,20 @@ node --test "tests/frontend/*.test.mjs"
 Die Bank spielt in den Tests `FakeStatementsApi`: sie liefert jedem Kunden nur seine Buchungen,
 merkt sich jeden Aufruf mit Token und Korrelations-Id und kann ablehnen, ausfallen oder hängen.
 
-Mehr in [docs/architecture.md](docs/architecture.md), die Vorführung in [docs/demo.md](docs/demo.md),
-Bildschirmfotos aus dem Gesamtsystem in [docs/nachweis](docs/nachweis).
+Mehr in [docs/architecture.md](docs/architecture.md), die Vorführung in [docs/demo.md](docs/demo.md).
+
+## Bildschirmfotos
+
+Aus dem laufenden Gesamtsystem, Stand 30. Oktober 2026, in [docs/nachweis](docs/nachweis):
+
+| Datei | Was es zeigt |
+|---|---|
+| `01-container-gesund.png` | alle 24 Container gesund, davon 9 der Analytics-Firma, `analytics-api` mit zwei Replikas |
+| `02-traefik-router.png` | die Router von Traefik zu `analytics`, auch `analytics-local` auf dem Eingang 8091 |
+| `03-eigener-rabbitmq-verbindungen.png` | am eigenen Broker hängen nur die zwei Instanzen von `analytics-api` |
+| `04-eigener-rabbitmq-queues.png` | `analytics.reports`, `analytics.annual-reports`, `analytics.budgets`, je mit DLQ |
+| `05-swagger-scopes.png` | Spezifikation v2 mit Budget und Jahresauszug, jede Operation mit Schloss (Scope) |
+| `06-grafana-metriken.png` | eigenes Grafana, "Analytics: Metriken": Anfragen, Instanzen, Aufrufe bei der Bank |
+| `07-sign-in-with-bank.png` | Statistikseite vor der Anmeldung |
+| `08-grafana-traces.png` | eigenes Grafana, "Analytics: Traces": wer ruft wen auf, Aufrufe bei der Bank |
+| `09-grafana-queues.png` | Nachrichten in den drei Queues |

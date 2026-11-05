@@ -17,7 +17,7 @@ flowchart LR
     kunde(["<b>Kunde der Bank</b><br/>Browser"])
 
     subgraph bank["Bank (Tim)"]
-        traefik["<b>Traefik</b><br/>Eingang :8080"]
+        traefik["<b>Traefik</b><br/>Eingänge :8080, :8091"]
         kc["<b>Keycloak</b><br/>auth.fischerfocus.com"]
         stmt["<b>statements-api</b><br/>GET /v2/statements/bookings"]
         bobs["Observability der Bank<br/>Grafana :3000"]
@@ -31,7 +31,7 @@ flowchart LR
     end
 
     kunde -->|"Sign in with Bank<br/>Client analytics-web"| kc
-    kunde -->|"analytics.localhost:8080"| traefik
+    kunde -->|"localhost:8091"| traefik
     traefik -->|"traceparent"| api
     api -->|"Token des Kunden<br/>über traefik:8080"| traefik
     traefik --> stmt
@@ -52,8 +52,9 @@ flowchart LR
 ```
 
 Durchgezogen ist synchron (HTTP), gestrichelt asynchron. Mein Container hängt nur im Netz
-`partner`: er sieht `analyticsdb`, `analytics-rabbitmq`, `analytics-alloy` und `traefik`, aber
-weder eine Datenbank noch den Broker noch die Observability der Bank.
+`partner`: er benutzt dort `analyticsdb`, `analytics-rabbitmq`, `analytics-alloy` und `traefik`.
+Eine Datenbank der Bank sieht er nicht. Der Broker und der Alloy der Bank hängen im Moment noch im
+selben Netz, bis Tim den Contract-Schritt abschliesst (siehe unten); mein Dienst benutzt sie nicht.
 
 | Richtung | Protokoll | Kontrakt | Zweck |
 |---|---|---|---|
@@ -222,8 +223,9 @@ hält keinen Monatsbericht auf, und beide lassen sich getrennt beobachten und sk
 
 Der Kunde legt ein Budget für seine Ausgaben im Monat fest (`PUT /v2/analytics/me/budget`).
 Ausgaben sind wie bei den Summen Auszahlungen und ausgehende Überweisungen. Erreichen sie 80
-Prozent, gibt es eine Warnung, bei 100 Prozent eine zweite. Die Seite zeigt sie oben auf jeder
-Seite und auf der Karte "Monatsbudget".
+Prozent, gibt es eine Warnung, bei 100 Prozent eine zweite. Der Konsument hält sie fest, die Karte
+"Monatsbudget" listet sie auf. Den Stand, den Balken und den Hinweis oben auf der Seite rechnet die
+API bei jedem `GET` direkt aus den gespeicherten Buchungen; dafür wartet sie nicht auf die Queue.
 
 ```mermaid
 sequenceDiagram
@@ -292,29 +294,42 @@ Ist der Broker beim Start nicht da oder scheitert die Vorbereitung, wird der Kan
 und alle zwei Sekunden neu versucht; es bleiben keine Kanäle liegen (getestet, indem dem Benutzer
 die Rechte entzogen und wieder gegeben werden).
 
-## Vom Broker der Bank zu HTTP
+## Von einer gefühlten Firma zu zwei Firmen
+
+| | Vorher: gefühlt eine Firma | Jetzt: zwei Firmen |
+|---|---|---|
+| Buchungen | Ereignis über den Broker der Bank, von allen Kunden | HTTP `GET /v2/statements/bookings` mit dem Token des Kunden, nur mit seiner Zustimmung |
+| RabbitMQ | ein Broker für beide, die Analytics-Firma mit eigenem Benutzer darauf | je einer: `m321-rabbitmq` für die Bank, `analytics-rabbitmq` für die Analytics-Firma |
+| Grafana, Loki, Tempo, Prometheus | ein Stack für beide | je einer: Bank auf `:3000`, Analytics-Firma auf `:3001` |
+| Logs | gemischt | getrennt, verbunden nur über Trace-Id und Korrelations-Id |
+| Berührungspunkte | Broker, Observability, Keycloak, Traefik | Keycloak und der HTTP-Aufruf über Traefik |
 
 Die Buchungen kamen zuerst über den Broker der Bank: als internes `transaction.completed`
 (Queue `analytics.ledger`, `analytics/asyncapi.v1.yaml`), dann als schlankes
 `partner.transaction.completed` (Queue `analytics.partner`, `analytics/asyncapi.v2.yaml`) mit
 einem eigenen, eingeschränkten Broker-Benutzer. Beide Umstellungen liefen als Expand and Contract.
 
-Seit Ende Oktober trennen wir die Firmen ganz. Die Analytics-Firma hängt nicht mehr am Broker der
-Bank, sondern liest mit dem Token des Kunden über HTTP. Gründe:
+Seit Ende Oktober sind die Firmen getrennt. Die Analytics-Firma hängt nicht mehr am Broker der
+Bank, sondern liest mit dem Token des Kunden über HTTP. RabbitMQ transportiert bei ihr keine
+Buchungen mehr, sondern nur noch Aufträge an die eigenen Worker. Gründe:
 
 - Zwischen den Firmen gibt es jetzt einen **synchronen Aufruf über einen formalen
   OpenAPI-Kontrakt**; vorher hatte dieser Dienst keinen Aufruf von Dienst zu Dienst.
 - Die Analytics-Firma sieht **nur Kunden, die zugestimmt haben**, und nur, solange sie zustimmen.
   Über den Broker bekam sie die Buchungen aller Kunden.
-- Kein Zugang zu fremder Infrastruktur: kein Broker-Benutzer, kein Netz der Bank.
+- Kein Zugriff auf fremde Infrastruktur: Jede Firma betreibt ihren eigenen Broker und ihre eigene
+  Observability.
 
 | Schritt | Wer | Was |
 |---|---|---|
-| Expand | Tim | `GET /v2/statements/bookings` in `statements/openapi.v2.yaml` 2.1.0, `statements:read` als optionaler Scope von `analytics-web` |
-| Migrate | Leart | Client aus dem Kontrakt, Token weiterreichen, Resilience; Summen, Buchungen und Berichte aus der Antwort der Bank; eigener Broker; Konsument von `analytics.partner`, Deklaration an `bank.events` und Laufzeitprüfung gegen `partner/asyncapi.v1.yaml` entfernt; Tabellen `processed_transactions`, `owner_monthly`, `system_daily` per Migration gelöscht |
-| Contract | Tim | `partner.transaction.completed` nicht mehr veröffentlichen, `broker-setup`, `partner-access.sh` und Benutzer `analytics` entfernen, Broker der Bank aus dem Netz `partner` nehmen |
+| Expand, erledigt | Tim | `GET /v2/statements/bookings` in `statements/openapi.v2.yaml` 2.1.0, `statements:read` als optionaler Scope von `analytics-web` |
+| Migrate, erledigt | Leart | Client aus dem Kontrakt, Token weiterreichen, Resilience; Summen, Buchungen und Berichte aus der Antwort der Bank; eigener Broker; Konsument von `analytics.partner`, Deklaration an `bank.events` und Laufzeitprüfung gegen `partner/asyncapi.v1.yaml` entfernt; Tabellen `processed_transactions`, `owner_monthly`, `system_daily` per Migration gelöscht |
+| Contract, offen | Tim | `partner.transaction.completed` nicht mehr veröffentlichen, `broker-setup`, `partner-access.sh` und Benutzer `analytics` entfernen, Broker der Bank aus dem Netz `partner` nehmen |
 
-Keine Firma muss gleichzeitig mit der anderen deployen: zwischen den Schritten laufen beide Wege.
+Keine Firma muss gleichzeitig mit der anderen deployen. Bis Tim den letzten Schritt macht, liegen
+am Broker der Bank noch die Reste: die Bindung auf `analytics.partner` (ohne Consumer, die Queue
+füllt sich also), ein altes `analytics.reports` und der Benutzer `analytics`. Mein Dienst benutzt
+nichts davon.
 
 `analytics/openapi.v1.yaml` bleibt unverändert, wie jeder veröffentlichte Kontrakt; die CI von
 `m321-main` lehnt jede Änderung an einer `*.v1.yaml` ab. Version 1 antwortet weiter im selben
@@ -479,3 +494,5 @@ eine CI, die ein fremdes Repo holt, koppelt die Repos.
 | 2026-10-30 | Buchungen über HTTP beim Auszugsdienst mit dem Token des Kunden: erzeugter Client, Weitergabe des Tokens, Zeitlimit, Wiederholung, Circuit Breaker, gespeicherter Stand bei Ausfall; Login mit `statements:read`; eigener Broker `analytics-rabbitmq`; Konsument von `analytics.partner` und die Summentabellen entfernt; CI ohne Abgleich mit dem Shared-Repo | Firmen komplett getrennt, synchrone Kommunikation über einen formalen Kontrakt, nur Kunden mit Zustimmung; Image war seit dem 2.10. nicht veröffentlicht |
 | 2026-10-30 | Eigener Observability-Stack: `analytics-alloy`, `-loki`, `-tempo`, `-prometheus`, `-grafana` mit den Dashboards "Analytics: Logs", "Metriken" und "Traces"; der Alloy der Bank lässt die Container der Analytics-Firma weg | Auch Logs, Traces und Metriken gehören jeder Firma selbst |
 | 2026-10-30 | Jahresauszug als PDF über die eigene Queue `analytics.annual-reports`; Monatsbudget (`/v2/analytics/me/budget`) mit Warnung bei 80 und 100 Prozent über die Queue `analytics.budgets`, Tabellen `budgets` und `budget_alerts`; Warnhinweis oben auf der Statistikseite | Kunden wollen den ganzen Jahresauszug für die Steuererklärung und eine Warnung, bevor das Geld für den Monat aufgebraucht ist |
+| 2026-10-30 | Bildschirmfotos in `docs/nachweis` neu aus dem laufenden System: eigener Broker mit drei Queues, eigenes Grafana, Swagger mit Budget und Jahresauszug | Die alten vom 28.9. zeigten noch den Broker der Bank und die abgelösten Queues |
+| 2026-11-05 | Doku an die Trennung der Firmen angeglichen: Vergleich vorher und jetzt, offener Contract-Schritt der Bank, Budgethinweis richtig beschrieben | Teile lasen sich noch wie eine Firma |

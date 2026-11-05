@@ -164,7 +164,7 @@ paths:
     get:
       tags: [reports]
       operationId: listMyReports
-      summary: Eigene Monatsberichte
+      summary: Eigene Berichte
       description: Die letzten 20 Berichte des Inhabers, neueste zuerst.
       security:
         - keycloak: [analytics:read]

@@ -2,11 +2,11 @@
 # Bank liegt im Shared-Repo m321-main.
 #
 # Die Analytics-Firma braucht die Bank nur für eines: die Buchungen ihrer Kunden, über HTTP am
-# Eingang der Bank. Der Broker hier ist der eigene, für die Monatsberichte. Läuft das Gesamtsystem
+# Eingang der Bank. Der Broker hier ist der eigene, für Berichte und Budgetprüfung. Läuft das Gesamtsystem
 # nicht, startet der Dienst trotzdem; er zeigt dann gespeicherte Buchungen oder antwortet 503.
 #
 #   docker compose up --build -d                              Auswertungsdienst allein
-#   docker compose up -d --scale analytics-api=3              drei Instanzen teilen sich die Queue
+#   docker compose up -d --scale analytics-api=3              drei Instanzen teilen sich die Queues
 #   docker compose --profile observability up --build -d      dazu Loki, Alloy, Tempo, Prometheus, Grafana
 #   docker compose up -d analyticsdb analytics-rabbitmq      nur Infrastruktur, Dienst mit dotnet run
 #
