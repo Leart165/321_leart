@@ -205,7 +205,7 @@ function showSignedOut(error) {
 }
 
 // Warnung oben auf jeder Seite, sobald 80 oder 100 Prozent des Monatsbudgets ausgegeben sind.
-// Die Stufe legt der Dienst im Hintergrund fest (Queue analytics.budgets); die Seite fragt jede Minute.
+// Die Stufe rechnet die API aus den gespeicherten Buchungen; die Seite fragt jede Minute.
 async function refreshBudget() {
   if (!app.api) {
     return;

@@ -1,6 +1,7 @@
 # Demo: Learts Teil
 
-Etwa zehn Minuten. Alles läuft im Gesamtsystem aus `m321-main`; Befehle aus dessen Verzeichnis.
+Etwa zehn Minuten. Tims RabbitMQ (`:15672`) nicht zeigen: Dort liegen bis zu seinem Contract-Schritt
+noch die alten Reste, siehe Abschnitt 8. Alles läuft im Gesamtsystem aus `m321-main`; Befehle aus dessen Verzeichnis.
 Vorher offen haben: den eigenen RabbitMQ (http://127.0.0.1:15674, Tab *Queues*), das eigene
 Grafana (http://127.0.0.1:3001, Ordner "Analytics": Logs, Metriken, Traces), das Grafana der Bank
 (http://127.0.0.1:3000) und die Statistikseite (http://localhost:8091/, der zweite Eingang von
@@ -86,9 +87,11 @@ docker compose -f docker-compose.yml -f ../override-port-8091.yml start statemen
   damit ein grosser Jahresauszug keinen Monatsbericht aufhält."
 - Reiter "Meine Übersicht", Karte "Monatsbudget": 100 eingeben, **Festlegen**. Der Balken zeigt,
   wie viel diesen Monat schon ausgegeben ist.
-- Im Frontend der Bank 90 auszahlen, dann die Statistikseite neu laden. Der Dienst speichert die
-  neue Buchung, schickt `budget.check.requested` in `analytics.budgets`, der Konsument legt die
-  Warnung an. Oben erscheint "Budget fast aufgebraucht"; nach weiteren 20 "Budget überschritten".
+- Im Frontend der Bank 90 auszahlen, dann die Übersicht neu laden. Der Dienst speichert die neue
+  Buchung und rechnet den Stand: Balken und Hinweis oben "Budget fast aufgebraucht" kommen direkt
+  von der API. Im Hintergrund geht `budget.check.requested` in `analytics.budgets`, der Konsument
+  hält die Warnung fest. Noch einmal neu laden: Sie steht in der Karte. Nach weiteren 20
+  "Budget überschritten".
 - Dazu sagen: "Die Anfrage wartet nicht auf die Prüfung. Jede Stufe kommt einmal im Monat, auch
   wenn beide Instanzen gleichzeitig prüfen: dafür sorgt ein eindeutiger Index."
 - Mein Grafana, Explore, Loki: `{service="analytics-api"} |= "Budget"` zeigt "Warnung angelegt".
@@ -107,12 +110,15 @@ docker stop m321-analytics-api-1
 docker start m321-analytics-api-1
 ```
 
-## 8. Expand and Contract über die Firmengrenze (1 min)
+## 8. Von einer gefühlten Firma zu zwei Firmen (1 min)
 
+- Dazu sagen: "Vorher hatten wir einen RabbitMQ und ein Grafana für beide, das war gefühlt eine
+  Firma. Jetzt hat jede Firma ihren eigenen, und wir reden nur noch über Keycloak und einen
+  HTTP-Vertrag."
 - **Expand**, Tim: `GET /v2/statements/bookings` in `statements/openapi.v2.yaml` 2.1.0, additiv.
 - **Migrate**, ich: Buchungen über HTTP, eigener Broker, der Konsument am Broker der Bank ist weg.
   `contracts/analytics/asyncapi.v2.yaml` ist als abgelöst markiert und bleibt als Nachweis.
-- **Contract**, Tim: `partner.transaction.completed` nicht mehr veröffentlichen, Benutzer
+- **Contract**, Tim, noch offen: `partner.transaction.completed` nicht mehr veröffentlichen, Benutzer
   `analytics` weg, Broker der Bank raus aus dem Netz `partner`.
 - Keine Firma musste gleichzeitig mit der anderen deployen.
 

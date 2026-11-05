@@ -8,8 +8,8 @@ public static class MessagingMetrics
 
     private static readonly Meter Meter = new Meter(MeterName);
 
-    // Derselbe Name wie bei den Konsumenten der Bank: das gemeinsame Dashboard gruppiert nur
-    // nach queue und outcome und zeigt analytics.reports so neben statements.ledger.
+    // Derselbe Name wie bei den Konsumenten der Bank, damit die Dashboards beider Firmen gleich
+    // aufgebaut sind. Das eigene Dashboard gruppiert nach queue und outcome.
     private static readonly Counter<long> Consumed = Meter.CreateCounter<long>(
         "bank.messages.consumed",
         unit: "{message}",
