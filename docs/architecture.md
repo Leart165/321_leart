@@ -12,59 +12,60 @@ Dieses Dokument beschreibt, was heute in diesem Repository steht.
 
 ## Überblick
 
+### 1. Anmelden und Buchungen holen
+
 ```mermaid
-flowchart LR
-    kunde(["<b>Kunde</b><br/>Browser"])
+sequenceDiagram
+    autonumber
+    participant S as Statistikseite
+    participant K as Keycloak (Tim)
+    participant A as analytics-api
+    participant T as Traefik (Tim)
+    participant B as statements-api (Tim)
+    participant D as analyticsdb
 
-    subgraph bank["Bank (Tim)"]
-        kc["<b>Keycloak</b>"]
-        traefik["<b>Traefik</b>"]
-        stmt["<b>statements-api</b>"]
-    end
-
-    subgraph firma["Analytics-Firma (Leart)"]
-        api["<b>analytics-api</b><br/>2 Instanzen"]
-        db[("<b>analyticsdb</b><br/>Buchungen, Outbox,<br/>Berichte, Warnungen")]
-        dispatcher["<b>Dispatcher</b><br/>in jeder Instanz"]
-        subgraph rmq["analytics-rabbitmq"]
-            ex{{"<b>analytics.events</b><br/>Exchange"}}
-            q["<b>Queues</b><br/>analytics.reports<br/>analytics.annual-reports<br/>analytics.budgets"]
-        end
-        worker["<b>6 Worker</b><br/>3 je Instanz"]
-        obs["<b>Observability</b><br/>Alloy, Loki, Tempo,<br/>Prometheus, Grafana"]
-    end
-
-    kunde -->|"1 Anmelden"| kc
-    kc -->|"2 signierter Token"| kunde
-    kunde -->|"3 Seite laden, mit Token"| traefik
-    traefik --> api
-    api -->|"4 Buchungen holen, mit Token"| traefik
-    traefik --> stmt
-    api -->|"5 Buchungen speichern"| db
-    api -->|"6 Bericht oder Budget:<br/>Auftrag in die Outbox, 202"| db
-    db -->|"7 Auftrag lesen"| dispatcher
-    dispatcher -.->|"8 senden"| ex
-    ex -.->|"9 nach Routing Key"| q
-    q -.->|"10 abholen"| worker
-    worker -->|"11 PDF oder Warnung speichern"| db
-    worker -.->|"12 Ack"| q
-    api -.-> obs
-
-    classDef person fill:#08427b,stroke:#052e56,color:#ffffff
-    classDef mine fill:#0f766e,stroke:#0b5f58,color:#ffffff
-    classDef store fill:#2d7dd2,stroke:#1a5a9e,color:#ffffff
-    classDef other fill:#999999,stroke:#6b6b6b,color:#ffffff
-    class kunde person
-    class api,dispatcher,ex,q,worker,obs mine
-    class db store
-    class kc,traefik,stmt other
+    S->>K: Anmelden
+    K-->>S: signierter Token
+    S->>A: Seite lädt, Anfrage mit Token
+    A->>K: Token mit öffentlichem Schlüssel prüfen
+    A->>T: Buchungen holen, mit Token, HTTP
+    T->>B: weiterleiten
+    B-->>A: nur die Buchungen dieses Kunden
+    A->>D: Buchungen speichern
+    A-->>S: Buchungen anzeigen
 ```
 
-**Buchungen (1 bis 5)** laufen nur über HTTP und nicht durch RabbitMQ. **Monatsbericht, Jahresauszug
-und Budgetprüfung (6 bis 12)** laufen im Hintergrund über den eigenen RabbitMQ. Das PDF holt der
-Kunde danach wieder per HTTP aus der Datenbank.
+Hier ist kein RabbitMQ beteiligt.
 
-Durchgezogen ist synchron (HTTP), gestrichelt asynchron. Mein Container hängt nur im Netz
+### 2. Bericht oder Budget im Hintergrund
+
+```mermaid
+flowchart TD
+    api["<b>analytics-api</b><br/>Kunde fordert Bericht an oder ändert das Budget"]
+    outbox[("<b>Outbox</b><br/>in analyticsdb")]
+    dispatcher["<b>Dispatcher</b><br/>in jeder Instanz"]
+    ex{{"<b>Exchange</b><br/>analytics.events"}}
+    q["<b>Queue</b><br/>analytics.reports, analytics.annual-reports<br/>oder analytics.budgets"]
+    worker["<b>Worker</b><br/>einer von 2 pro Queue"]
+    db[("<b>analyticsdb</b><br/>PDF oder Warnung")]
+
+    api -->|"1 Auftrag speichern, Antwort 202"| outbox
+    outbox -->|"2 Auftrag lesen"| dispatcher
+    dispatcher -->|"3 senden"| ex
+    ex -->|"4 nach Routing Key"| q
+    q -->|"5 abholen"| worker
+    worker -->|"6 Ergebnis speichern"| db
+    worker -.->|"7 Ack an RabbitMQ"| q
+
+    classDef mine fill:#0f766e,stroke:#0b5f58,color:#ffffff
+    classDef store fill:#2d7dd2,stroke:#1a5a9e,color:#ffffff
+    class api,dispatcher,ex,q,worker mine
+    class outbox,db store
+```
+
+Das fertige PDF holt der Kunde danach per HTTP aus der Datenbank.
+
+Mein Container hängt nur im Netz
 `partner`: er benutzt dort `analyticsdb`, `analytics-rabbitmq`, `analytics-alloy` und `traefik`.
 Eine Datenbank der Bank sieht er nicht. Der Broker und der Alloy der Bank hängen im Moment noch im
 selben Netz, bis Tim den Contract-Schritt abschliesst (siehe unten); mein Dienst benutzt sie nicht.
