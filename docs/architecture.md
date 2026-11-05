@@ -14,42 +14,55 @@ Dieses Dokument beschreibt, was heute in diesem Repository steht.
 
 ```mermaid
 flowchart LR
-    kunde(["<b>Kunde der Bank</b><br/>Browser"])
+    kunde(["<b>Kunde</b><br/>Browser"])
 
     subgraph bank["Bank (Tim)"]
-        traefik["<b>Traefik</b><br/>Eingänge :8080, :8091"]
-        kc["<b>Keycloak</b><br/>auth.fischerfocus.com"]
-        stmt["<b>statements-api</b><br/>GET /v2/statements/bookings"]
-        bobs["Observability der Bank<br/>Grafana :3000"]
+        kc["<b>Keycloak</b>"]
+        traefik["<b>Traefik</b>"]
+        stmt["<b>statements-api</b>"]
     end
 
-    subgraph partner["Analytics-Firma (Leart)"]
-        api["<b>analytics-api</b> ×2<br/>.NET 10<br/>API, Statistikseite, Berichte, Budget"]
-        db[("<b>analyticsdb</b><br/>Postgres 18")]
-        amq{{"<b>analytics-rabbitmq</b><br/>analytics.events"}}
-        obs["<b>analytics-alloy</b> → Loki, Tempo,<br/>Prometheus, <b>analytics-grafana</b> :3001"]
+    subgraph firma["Analytics-Firma (Leart)"]
+        api["<b>analytics-api</b><br/>2 Instanzen"]
+        db[("<b>analyticsdb</b><br/>Buchungen, Outbox,<br/>Berichte, Warnungen")]
+        dispatcher["<b>Dispatcher</b><br/>in jeder Instanz"]
+        subgraph rmq["analytics-rabbitmq"]
+            ex{{"<b>analytics.events</b><br/>Exchange"}}
+            q["<b>Queues</b><br/>analytics.reports<br/>analytics.annual-reports<br/>analytics.budgets"]
+        end
+        worker["<b>6 Worker</b><br/>3 je Instanz"]
+        obs["<b>Observability</b><br/>Alloy, Loki, Tempo,<br/>Prometheus, Grafana"]
     end
 
-    kunde -->|"Sign in with Bank<br/>Client analytics-web"| kc
-    kunde -->|"localhost:8091"| traefik
-    traefik -->|"traceparent"| api
-    api -->|"Token des Kunden<br/>über traefik:8080"| traefik
+    kunde -->|"1 Anmelden"| kc
+    kc -->|"2 signierter Token"| kunde
+    kunde -->|"3 Seite laden, mit Token"| traefik
+    traefik --> api
+    api -->|"4 Buchungen holen, mit Token"| traefik
     traefik --> stmt
-    api -.->|"JWKS über Discovery"| kc
-    api --> db
-    api -.->|"report.requested<br/>annual-report.requested<br/>budget.check.requested"| amq
-    amq -.->|"analytics.reports<br/>analytics.annual-reports<br/>analytics.budgets"| api
-    api -.->|"OTLP, Logs"| obs
+    api -->|"5 Buchungen speichern"| db
+    api -->|"6 Bericht oder Budget:<br/>Auftrag in die Outbox, 202"| db
+    db -->|"7 Auftrag lesen"| dispatcher
+    dispatcher -.->|"8 senden"| ex
+    ex -.->|"9 nach Routing Key"| q
+    q -.->|"10 abholen"| worker
+    worker -->|"11 PDF oder Warnung speichern"| db
+    worker -.->|"12 Ack"| q
+    api -.-> obs
 
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff
     classDef mine fill:#0f766e,stroke:#0b5f58,color:#ffffff
     classDef store fill:#2d7dd2,stroke:#1a5a9e,color:#ffffff
     classDef other fill:#999999,stroke:#6b6b6b,color:#ffffff
     class kunde person
-    class api,amq,obs mine
+    class api,dispatcher,ex,q,worker,obs mine
     class db store
-    class traefik,kc,stmt,bobs other
+    class kc,traefik,stmt other
 ```
+
+**Buchungen (1 bis 5)** laufen nur über HTTP und nicht durch RabbitMQ. **Monatsbericht, Jahresauszug
+und Budgetprüfung (6 bis 12)** laufen im Hintergrund über den eigenen RabbitMQ. Das PDF holt der
+Kunde danach wieder per HTTP aus der Datenbank.
 
 Durchgezogen ist synchron (HTTP), gestrichelt asynchron. Mein Container hängt nur im Netz
 `partner`: er benutzt dort `analyticsdb`, `analytics-rabbitmq`, `analytics-alloy` und `traefik`.
