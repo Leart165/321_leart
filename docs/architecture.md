@@ -12,46 +12,60 @@ Dieses Dokument beschreibt, was heute in diesem Repository steht.
 
 ## Überblick
 
+### 1. Anmelden und Buchungen holen
+
 ```mermaid
-flowchart LR
-    kunde(["<b>Kunde der Bank</b><br/>Browser"])
+sequenceDiagram
+    autonumber
+    participant S as Statistikseite
+    participant K as Keycloak (Tim)
+    participant A as analytics-api
+    participant T as Traefik (Tim)
+    participant B as statements-api (Tim)
+    participant D as analyticsdb
 
-    subgraph bank["Bank (Tim)"]
-        traefik["<b>Traefik</b><br/>Eingänge :8080, :8091"]
-        kc["<b>Keycloak</b><br/>auth.fischerfocus.com"]
-        stmt["<b>statements-api</b><br/>GET /v2/statements/bookings"]
-        bobs["Observability der Bank<br/>Grafana :3000"]
-    end
-
-    subgraph partner["Analytics-Firma (Leart)"]
-        api["<b>analytics-api</b> ×2<br/>.NET 10<br/>API, Statistikseite, Berichte, Budget"]
-        db[("<b>analyticsdb</b><br/>Postgres 18")]
-        amq{{"<b>analytics-rabbitmq</b><br/>analytics.events"}}
-        obs["<b>analytics-alloy</b> → Loki, Tempo,<br/>Prometheus, <b>analytics-grafana</b> :3001"]
-    end
-
-    kunde -->|"Sign in with Bank<br/>Client analytics-web"| kc
-    kunde -->|"localhost:8091"| traefik
-    traefik -->|"traceparent"| api
-    api -->|"Token des Kunden<br/>über traefik:8080"| traefik
-    traefik --> stmt
-    api -.->|"JWKS über Discovery"| kc
-    api --> db
-    api -.->|"report.requested<br/>annual-report.requested<br/>budget.check.requested"| amq
-    amq -.->|"analytics.reports<br/>analytics.annual-reports<br/>analytics.budgets"| api
-    api -.->|"OTLP, Logs"| obs
-
-    classDef person fill:#08427b,stroke:#052e56,color:#ffffff
-    classDef mine fill:#0f766e,stroke:#0b5f58,color:#ffffff
-    classDef store fill:#2d7dd2,stroke:#1a5a9e,color:#ffffff
-    classDef other fill:#999999,stroke:#6b6b6b,color:#ffffff
-    class kunde person
-    class api,amq,obs mine
-    class db store
-    class traefik,kc,stmt,bobs other
+    S->>K: Anmelden
+    K-->>S: signierter Token
+    S->>A: Seite lädt, Anfrage mit Token
+    A->>K: Token mit öffentlichem Schlüssel prüfen
+    A->>T: Buchungen holen, mit Token, HTTP
+    T->>B: weiterleiten
+    B-->>A: nur die Buchungen dieses Kunden
+    A->>D: Buchungen speichern
+    A-->>S: Buchungen anzeigen
 ```
 
-Durchgezogen ist synchron (HTTP), gestrichelt asynchron. Mein Container hängt nur im Netz
+Hier ist kein RabbitMQ beteiligt.
+
+### 2. Bericht oder Budget im Hintergrund
+
+```mermaid
+flowchart TD
+    api["<b>analytics-api</b><br/>Kunde fordert Bericht an oder ändert das Budget"]
+    outbox[("<b>Outbox</b><br/>in analyticsdb")]
+    dispatcher["<b>Dispatcher</b><br/>in jeder Instanz"]
+    ex{{"<b>Exchange</b><br/>analytics.events"}}
+    q["<b>Queue</b><br/>analytics.reports, analytics.annual-reports<br/>oder analytics.budgets"]
+    worker["<b>Worker</b><br/>einer von 2 pro Queue"]
+    db[("<b>analyticsdb</b><br/>PDF oder Warnung")]
+
+    api -->|"1 Auftrag speichern, Antwort 202"| outbox
+    outbox -->|"2 Auftrag lesen"| dispatcher
+    dispatcher -->|"3 senden"| ex
+    ex -->|"4 nach Routing Key"| q
+    q -->|"5 abholen"| worker
+    worker -->|"6 Ergebnis speichern"| db
+    worker -.->|"7 Ack an RabbitMQ"| q
+
+    classDef mine fill:#0f766e,stroke:#0b5f58,color:#ffffff
+    classDef store fill:#2d7dd2,stroke:#1a5a9e,color:#ffffff
+    class api,dispatcher,ex,q,worker mine
+    class outbox,db store
+```
+
+Das fertige PDF holt der Kunde danach per HTTP aus der Datenbank.
+
+Mein Container hängt nur im Netz
 `partner`: er benutzt dort `analyticsdb`, `analytics-rabbitmq`, `analytics-alloy` und `traefik`.
 Eine Datenbank der Bank sieht er nicht. Der Broker und der Alloy der Bank hängen im Moment noch im
 selben Netz, bis Tim den Contract-Schritt abschliesst (siehe unten); mein Dienst benutzt sie nicht.
